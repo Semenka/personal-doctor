@@ -1,0 +1,39 @@
+{
+  "_format": "hh3-sol-build-info-1",
+  "id": "solc-0_8_28-a815ae71b75446cb94ddb6248a94b7d15a3a5d6b",
+  "solcVersion": "0.8.28",
+  "solcLongVersion": "0.8.28+commit.7893614a",
+  "userSourceNameMap": {
+    "contracts/Counter.sol": "project/contracts/Counter.sol"
+  },
+  "input": {
+    "language": "Solidity",
+    "settings": {
+      "evmVersion": "cancun",
+      "optimizer": {
+        "enabled": true,
+        "runs": 200
+      },
+      "outputSelection": {
+        "*": {
+          "": [
+            "ast"
+          ],
+          "*": [
+            "abi",
+            "evm.bytecode",
+            "evm.deployedBytecode",
+            "evm.methodIdentifiers",
+            "metadata"
+          ]
+        }
+      },
+      "remappings": []
+    },
+    "sources": {
+      "project/contracts/Counter.sol": {
+        "content": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.28;\n\ninterface IDolomiteMargin {\n  function getAccountValues(\n    address accountOwner,\n    uint256 accountNumber\n  ) external view returns (uint256 supplyValue, uint256 borrowValue);\n}\n\ninterface IPositionRebalancer {\n  function rebalance(\n    address accountOwner,\n    uint256 accountNumber,\n    uint256 wbtcAmountIn,\n    uint256 minUsdcOut\n  ) external;\n}\n\ncontract DolomitePositionGuardian {\n  address public owner;\n  IDolomiteMargin public dolomiteMargin;\n  IPositionRebalancer public rebalancer;\n\n  uint256 public safetyMarginBps;\n  uint256 public constant MAX_BPS = 10_000;\n\n  event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);\n  event SafetyMarginUpdated(uint256 previousBps, uint256 newBps);\n  event RebalancerUpdated(address indexed previousRebalancer, address indexed newRebalancer);\n  event DolomiteMarginUpdated(address indexed previousMargin, address indexed newMargin);\n  event PositionAdjusted(\n    address indexed accountOwner,\n    uint256 indexed accountNumber,\n    uint256 marginBps,\n    uint256 wbtcAmountIn,\n    uint256 minUsdcOut\n  );\n\n  error NotOwner();\n  error InvalidAddress();\n  error InvalidBps();\n  error NoBorrow();\n  error SafetyMarginNotBreached(uint256 marginBps, uint256 thresholdBps);\n\n  modifier onlyOwner() {\n    if (msg.sender != owner) {\n      revert NotOwner();\n    }\n    _;\n  }\n\n  constructor(address dolomiteMarginAddress, address rebalancerAddress, uint256 initialSafetyMarginBps) {\n    if (dolomiteMarginAddress == address(0) || rebalancerAddress == address(0)) {\n      revert InvalidAddress();\n    }\n    if (initialSafetyMarginBps > MAX_BPS) {\n      revert InvalidBps();\n    }\n    owner = msg.sender;\n    dolomiteMargin = IDolomiteMargin(dolomiteMarginAddress);\n    rebalancer = IPositionRebalancer(rebalancerAddress);\n    safetyMarginBps = initialSafetyMarginBps;\n  }\n\n  function transferOwnership(address newOwner) external onlyOwner {\n    if (newOwner == address(0)) {\n      revert InvalidAddress();\n    }\n    emit OwnershipTransferred(owner, newOwner);\n    owner = newOwner;\n  }\n\n  function setSafetyMarginBps(uint256 newSafetyMarginBps) external onlyOwner {\n    if (newSafetyMarginBps > MAX_BPS) {\n      revert InvalidBps();\n    }\n    emit SafetyMarginUpdated(safetyMarginBps, newSafetyMarginBps);\n    safetyMarginBps = newSafetyMarginBps;\n  }\n\n  function setDolomiteMargin(address newDolomiteMargin) external onlyOwner {\n    if (newDolomiteMargin == address(0)) {\n      revert InvalidAddress();\n    }\n    emit DolomiteMarginUpdated(address(dolomiteMargin), newDolomiteMargin);\n    dolomiteMargin = IDolomiteMargin(newDolomiteMargin);\n  }\n\n  function setRebalancer(address newRebalancer) external onlyOwner {\n    if (newRebalancer == address(0)) {\n      revert InvalidAddress();\n    }\n    emit RebalancerUpdated(address(rebalancer), newRebalancer);\n    rebalancer = IPositionRebalancer(newRebalancer);\n  }\n\n  function getSafetyMarginBps(\n    address accountOwner,\n    uint256 accountNumber\n  ) public view returns (uint256 marginBps, uint256 supplyValue, uint256 borrowValue) {\n    (supplyValue, borrowValue) = dolomiteMargin.getAccountValues(accountOwner, accountNumber);\n    if (borrowValue == 0) {\n      revert NoBorrow();\n    }\n    if (supplyValue <= borrowValue) {\n      marginBps = 0;\n    } else {\n      marginBps = ((supplyValue - borrowValue) * MAX_BPS) / borrowValue;\n    }\n  }\n\n  function adjustPosition(\n    address accountOwner,\n    uint256 accountNumber,\n    uint256 wbtcAmountIn,\n    uint256 minUsdcOut\n  ) external {\n    (uint256 marginBps,,) = getSafetyMarginBps(accountOwner, accountNumber);\n    if (marginBps > safetyMarginBps) {\n      revert SafetyMarginNotBreached(marginBps, safetyMarginBps);\n    }\n\n    rebalancer.rebalance(accountOwner, accountNumber, wbtcAmountIn, minUsdcOut);\n    emit PositionAdjusted(accountOwner, accountNumber, marginBps, wbtcAmountIn, minUsdcOut);\n  }\n}\n"
+      }
+    }
+  }
+}
