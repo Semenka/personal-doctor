@@ -10,7 +10,7 @@ This monorepo has been split into two independent projects. Each is available in
 
 | Project | Local Path | Description |
 |---|---|---|
-| **Personal Doctor** | `/home/user/personal-doctor-python/` | Python FastAPI daily health advisor — Oura Ring, Google Drive, Claude Opus 4.6 AI advisor for sperm motility & energy |
+| **Personal Doctor** | `/home/user/personal-doctor-python/` | Python FastAPI daily health advisor — Oura Ring, Google Drive, Claude Opus 4.6 AI advisor for sperm motility & energy, email delivery |
 | **HackMoney2026** | `/home/user/hackmoney2026/` | Solidity contracts + React dashboard — Dolomite WBTC/USDC position on Arbitrum |
 
 Both are initialized git repos with their own `CLAUDE.md`, `.gitignore`, `README.md`, and an initial commit.
