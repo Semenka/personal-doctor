@@ -2,35 +2,59 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with this repository.
 
-## Repository Split Notice
+## Repository Split
 
-This repository has been split into two independent repositories:
+This monorepo has been split into two independent projects. Each is available in two forms:
 
-| Project | Location | Description |
+### Local Repositories (ready to use)
+
+| Project | Local Path | Description |
 |---|---|---|
-| **Personal Doctor** | `/home/user/personal-doctor-python/` | Python FastAPI daily health advisor — Oura Ring integration, research-backed recommendations |
-| **HackMoney2026** | `/home/user/hackmoney2026/` | Solidity smart contracts + React dashboard — Dolomite WBTC/USDC position monitoring on Arbitrum |
+| **Personal Doctor** | `/home/user/personal-doctor-python/` | Python FastAPI daily health advisor — Oura Ring, research-backed recommendations |
+| **HackMoney2026** | `/home/user/hackmoney2026/` | Solidity contracts + React dashboard — Dolomite WBTC/USDC position on Arbitrum |
 
-Each repository has its own `CLAUDE.md` with full project documentation, `.gitignore`, and `README.md`.
+Both are initialized git repos with their own `CLAUDE.md`, `.gitignore`, `README.md`, and an initial commit.
 
-## Setting Up GitHub Remotes
+### Orphan Branches (in this repo)
 
-The new repositories are initialized locally. To push them to GitHub:
+The same content also lives as orphan branches in this repository for easy GitHub repo creation:
+
+| Branch | Content |
+|---|---|
+| `personal-doctor-python` | Python health advisor — standalone root, no shared history |
+| `hackmoney2026` | Solidity + React DeFi dashboard — standalone root, no shared history |
+
+## Creating the GitHub Repositories
+
+### Option A: From local repos
 
 ```bash
-# Personal Doctor
+# 1. Create repos on GitHub (https://github.com/new) — do NOT initialize with README
+
+# 2. Personal Doctor
 cd /home/user/personal-doctor-python
 git remote add origin git@github.com:Semenka/personal-doctor-python.git
 git push -u origin main
 
-# HackMoney2026
+# 3. HackMoney2026
 cd /home/user/hackmoney2026
 git remote add origin git@github.com:Semenka/hackmoney2026.git
 git push -u origin main
 ```
 
-Create the GitHub repositories first via https://github.com/new before pushing.
+### Option B: From orphan branches (using GitHub CLI)
+
+```bash
+# 1. Create repos on GitHub
+gh repo create Semenka/personal-doctor-python --public --description "Python FastAPI daily health advisor"
+gh repo create Semenka/hackmoney2026 --public --description "Dolomite Guardian — DeFi position monitoring"
+
+# 2. Push orphan branches as main
+cd /home/user/personal-doctor
+git push git@github.com:Semenka/personal-doctor-python.git personal-doctor-python:main
+git push git@github.com:Semenka/hackmoney2026.git hackmoney2026:main
+```
 
 ## This Repository
 
-This original `personal-doctor` repo served as a monorepo. The project contents have been moved to the standalone repositories listed above. This repo is retained for history only.
+The original `personal-doctor` repo served as a monorepo. Project contents have been extracted into the standalone repositories above. This repo is retained for git history only.
