@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Daily Health Report</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "Space Grotesk", "Trebuchet MS", sans-serif;
+        --bg: #f7f5ef;
+        --accent: #ec6f2d;
+        --ink: #1b1a17;
+      }
+      body {
+        margin: 0;
+        background: radial-gradient(circle at top, #fff, var(--bg));
+        color: var(--ink);
+      }
+      main {
+        max-width: 720px;
+        margin: 48px auto;
+        background: white;
+        padding: 32px;
+        border-radius: 24px;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.1);
+      }
+      h1 {
+        margin-top: 0;
+      }
+      .tag {
+        display: inline-block;
+        padding: 6px 12px;
+        border-radius: 999px;
+        background: #fceadf;
+        color: var(--accent);
+        margin-right: 8px;
+      }
+      ul {
+        margin-top: 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <a href="/">← Back</a>
+      <h1>Daily Report</h1>
+      {% if error_message %}
+      <p><strong>Issue:</strong> {{ error_message }}</p>
+      {% endif %}
+      {% if report %}
+      <p><strong>Summary:</strong> {{ report.summary }}</p>
+      <section>
+        <h2>Signals</h2>
+        <p>
+          <span class="tag">Sleep: {{ report.signals.sleep }}</span>
+          <span class="tag">Recovery: {{ report.signals.recovery }}</span>
+          <span class="tag">Hydration: {{ report.signals.hydration }}</span>
+          <span class="tag">Mobility: {{ report.signals.mobility }}</span>
+        </p>
+      </section>
+      <section>
+        <h2>Recommendations</h2>
+        {% for rec in report.recommendations %}
+        <h3>[{{ rec.category }}] {{ rec.title }}</h3>
+        <ul>
+          {% for item in rec.details %}
+          <li>{{ item }}</li>
+          {% endfor %}
+        </ul>
+        {% endfor %}
+      </section>
+      <section>
+        <h2>Research-backed actions</h2>
+        {% if report.research_recommendations %}
+        {% for rec in report.research_recommendations %}
+        <h3>{{ rec.goal | capitalize }} · {{ rec.expected_impact_pct }}% expected</h3>
+        <ul>
+          <li>{{ rec.action }}</li>
+          <li>{{ rec.evidence }}</li>
+          {% if rec.url %}
+          <li><a href="{{ rec.url }}" target="_blank">View paper</a></li>
+          {% endif %}
+        </ul>
+        {% endfor %}
+        {% else %}
+        <p>No research actions loaded for today yet.</p>
+        {% endif %}
+      </section>
+      {% endif %}
+    </main>
+  </body>
+</html>

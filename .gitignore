@@ -1,6 +1,40 @@
-.DS_Store
-.localized
-*.pyc
+# Python
 __pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# Environment variables
 .env
-node_modules/
+.env.*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data (keep sample, ignore ingested)
+data/ingested/
+data/labs/
+
+# Google Drive credentials
+credentials.json
+token.json
+
+# Logs
+*.log
