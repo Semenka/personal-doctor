@@ -48,9 +48,29 @@ def run_oura_sync() -> None:
 
     config = load_config()
     day = datetime.now(tz=config.timezone).date()
+    if not config.oura_access_token:
+        print("Skipping Oura sync: OURA_ACCESS_TOKEN not set.")
+        return
     if config.database_url:
         init_db(config)
-    payload = load_oura_daily(config, day)
+
+    # Retry up to 3 times with backoff for transient network failures
+    payload = None
+    for attempt in range(3):
+        try:
+            payload = load_oura_daily(config, day)
+            break
+        except Exception as exc:
+            wait = 2 ** attempt
+            print(f"Oura sync attempt {attempt + 1}/3 failed: {exc}")
+            if attempt < 2:
+                print(f"  Retrying in {wait}s...")
+                time.sleep(wait)
+
+    if payload is None:
+        print("Oura sync: all retries exhausted.")
+        return
+
     if config.database_url:
         save_daily_payload_db(config, payload)
         print("Saved daily payload to Postgres.")
@@ -122,7 +142,39 @@ def run_daily_advisor() -> None:
     try:
         advice = generate_daily_advice(config, day)
     except Exception as exc:
-        print(f"Daily advisor failed: {exc}")
+        print(f"Daily advisor generation failed: {exc}")
+        # Send a fallback email so the user knows something went wrong
+        if config.email_to and config.smtp_host:
+            try:
+                fallback = {
+                    "report_type": "daily_advisor",
+                    "date": day.isoformat(),
+                    "generated_at": datetime.utcnow().isoformat() + "Z",
+                    "model": "N/A",
+                    "advice": (
+                        f"## Daily Health Plan — {day.isoformat()}\n\n"
+                        f"**Advisor generation failed.**\n\n"
+                        f"Error: {exc}\n\n"
+                        "The AI advisor could not generate today's plan. "
+                        "This may be caused by:\n"
+                        "- Anthropic API credit balance too low\n"
+                        "- Temporary API outage\n"
+                        "- Invalid API key\n\n"
+                        "Please check the server logs and "
+                        "https://console.anthropic.com for details."
+                    ),
+                    "context_summary": {
+                        "oura_available": False,
+                        "lab_reports_count": 0,
+                        "lab_report_types": [],
+                        "image_analyses_count": 0,
+                        "image_severities": [],
+                    },
+                }
+                email_advice(config, fallback)
+                print(f"Sent fallback error email to {config.email_to}")
+            except Exception as email_exc:
+                print(f"Fallback email also failed: {email_exc}")
         return
 
     print_advice(advice)
