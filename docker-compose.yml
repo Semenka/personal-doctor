@@ -1,0 +1,28 @@
+version: "3.9"
+
+services:
+  # One-shot pipeline run (same as Cloud Run Job)
+  pipeline:
+    build: .
+    command: ["python", "-m", "app.sync.run_pipeline"]
+    env_file: .env
+    environment:
+      - HEALTH_DATA_DIR=/tmp/data
+      - HEALTH_TIMEZONE=Europe/Paris
+    volumes:
+      - pipeline-data:/tmp/data
+
+  # Long-running scheduler (alternative to Cloud Scheduler)
+  scheduler:
+    build: .
+    command: ["python", "-m", "app.sync.scheduler"]
+    env_file: .env
+    environment:
+      - HEALTH_DATA_DIR=/tmp/data
+      - HEALTH_TIMEZONE=Europe/Paris
+    volumes:
+      - pipeline-data:/tmp/data
+    restart: unless-stopped
+
+volumes:
+  pipeline-data:
