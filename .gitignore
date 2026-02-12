@@ -15,7 +15,9 @@ ENV/
 
 # Environment variables
 .env
-.env.*
+.env.local
+.env.production
+!.env.example
 
 # IDE
 .idea/
