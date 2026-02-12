@@ -18,28 +18,28 @@ REPORT_TYPE_VALUES = set(REPORT_TYPES.values())
 
 _PATTERNS = {
     "blood_test": re.compile(
-        r"(blood[\s_-]?test|hemo(glo|gram)|cbc|complete[\s_-]?blood|lipid[\s_-]?panel"
-        r"|blood[\s_-]?work|blood[\s_-]?analysis|hemato)",
+        r"(blood[\s_-]?(test|panel|work|analysis|results|report)|hemo(glo|gram)|cbc"
+        r"|complete[\s_-]?blood|lipid[\s_-]?panel|hemato)",
         re.IGNORECASE,
     ),
     "urine_test": re.compile(
-        r"(urine[\s_-]?test|urinalysis|urine[\s_-]?analysis|urine[\s_-]?sample)",
+        r"(urine[\s_-]?(test|analysis|sample|results|report)|urinalysis)",
         re.IGNORECASE,
     ),
     "genetic_test": re.compile(
-        r"(genetic[\s_-]?test|dna[\s_-]?test|genom|23andme|ancestry|snp|genetic[\s_-]?analysis"
-        r"|karyotype|genetic[\s_-]?screen)",
+        r"(genetic[\s_-]?(test|analysis|report|screen|results)|dna[\s_-]?test|genom"
+        r"|23andme|ancestry|snp|karyotype)",
         re.IGNORECASE,
     ),
     "sperm_test": re.compile(
-        r"(sperm[\s_-]?test|spermogram|semen[\s_-]?analysis|sperm[\s_-]?count"
-        r"|sperm[\s_-]?motil|seminogram)",
+        r"(sperm[\s_-]?(test|analysis|count|motil|report|results)|spermogram"
+        r"|semen[\s_-]?analysis|seminogram)",
         re.IGNORECASE,
     ),
     "doctor_conclusion": re.compile(
-        r"(doctor[\s_-]?conclusion|medical[\s_-]?conclusion|diagnosis|clinical[\s_-]?summary"
-        r"|discharge[\s_-]?summary|doctor[\s_-]?report|medical[\s_-]?report"
-        r"|check[\s_-]?up|annual[\s_-]?exam|consultation[\s_-]?report)",
+        r"(doctor[\s_-]?(conclusion|report)|medical[\s_-]?(conclusion|report)"
+        r"|diagnosis|clinical[\s_-]?summary|discharge[\s_-]?summary"
+        r"|consultation[\s_-]?report)",
         re.IGNORECASE,
     ),
     "prescription": re.compile(
@@ -51,7 +51,7 @@ _PATTERNS = {
         r"(health[\s_-]?check|medical[\s_-]?check[\s_-]?up|annual[\s_-]?check[\s_-]?up"
         r"|general[\s_-]?check[\s_-]?up|routine[\s_-]?exam|preventive[\s_-]?exam"
         r"|wellness[\s_-]?exam|physical[\s_-]?exam|full[\s_-]?body[\s_-]?check"
-        r"|comprehensive[\s_-]?exam)",
+        r"|comprehensive[\s_-]?exam|check[\s_-]?up|annual[\s_-]?exam)",
         re.IGNORECASE,
     ),
 }

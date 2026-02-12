@@ -12,7 +12,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/ app/
 
-# Default: run the scheduler (persistent mode)
-# Override with CMD for one-shot jobs
+# Copy OpenClaw skill (for Docker-based OpenClaw deployments)
+COPY openclaw/ openclaw/
+
+# Default: run the local server (web dashboard + scheduler)
+# Alternatives:
+#   CMD ["python", "-m", "app.sync.scheduler"]       # scheduler only
+#   CMD ["python", "-m", "app.sync.run_pipeline"]     # one-shot pipeline
 ENV PYTHONUNBUFFERED=1
-CMD ["python", "-m", "app.sync.scheduler"]
+CMD ["python", "-m", "app.server"]

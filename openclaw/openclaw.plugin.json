@@ -1,0 +1,9 @@
+{
+  "name": "personal-doctor",
+  "version": "1.0.0",
+  "description": "AI health advisor — Oura Ring + Google Drive + Claude Opus 4.6 daily health plans",
+  "author": "Semenka",
+  "license": "MIT",
+  "skills": ["personal-doctor"],
+  "homepage": "https://github.com/Semenka/personal-doctor-python"
+}

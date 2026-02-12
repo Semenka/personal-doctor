@@ -233,4 +233,16 @@ echo "    Uninstall:      ./setup-mac.sh --uninstall"
 echo ""
 echo "  Manual pipeline:  $VENV_PYTHON -m app.sync.cli --source advisor --email"
 echo ""
+echo "  OpenClaw integration (optional):"
+echo "    ./setup-openclaw.sh"
+echo ""
 echo -e "${BOLD}═══════════════════════════════════════════════════${NC}"
+
+# ── Optional: OpenClaw integration ──
+if command -v openclaw &>/dev/null; then
+    echo ""
+    read -rp "OpenClaw detected. Set up OpenClaw integration? [y/N] " yn
+    case "$yn" in
+        [yY]*) "$REPO_DIR/setup-openclaw.sh" --skill-only ;;
+    esac
+fi
