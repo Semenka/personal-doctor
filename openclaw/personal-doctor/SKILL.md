@@ -33,7 +33,7 @@ The Personal Doctor runs as a local server on your Mac Mini with a background sc
 To run the full pipeline on demand:
 
 ```bash
-cd ~/personal-doctor-python
+cd ~/personal-doctor
 .venv/bin/python -m app.sync.run_pipeline
 ```
 
@@ -91,7 +91,7 @@ The advisor combines data from multiple sources:
 
 ## Environment variables
 
-These must be set in `~/personal-doctor-python/.env`:
+These must be set in `~/personal-doctor/.env`:
 
 | Variable | Required | Description |
 |----------|----------|-------------|

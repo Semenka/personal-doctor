@@ -18,8 +18,8 @@ Python CLI + web UI for daily health analysis, powered by Oura Ring data and Cla
 One-command setup that auto-starts on boot:
 
 ```bash
-git clone https://github.com/Semenka/personal-doctor-python.git
-cd personal-doctor-python
+git clone https://github.com/Semenka/personal-doctor.git
+cd personal-doctor
 ./setup-mac.sh
 ```
 
@@ -47,8 +47,8 @@ Chat with your health advisor via WhatsApp, Telegram, or Discord:
 npm install -g openclaw@latest && openclaw onboard
 
 # Then set up Personal Doctor
-git clone https://github.com/Semenka/personal-doctor-python.git
-cd personal-doctor-python
+git clone https://github.com/Semenka/personal-doctor.git
+cd personal-doctor
 ./setup-openclaw.sh
 ```
 

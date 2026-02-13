@@ -11,7 +11,7 @@
 # Prerequisites:
 #   - OpenClaw installed (npm install -g openclaw@latest)
 #   - Python 3.11+ installed
-#   - This repo cloned to ~/personal-doctor-python
+#   - This repo cloned to ~/personal-doctor
 #
 # Usage:
 #   ./setup-openclaw.sh              # Full setup
