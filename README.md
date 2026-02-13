@@ -7,35 +7,68 @@ Python CLI + web UI for daily health analysis, powered by Oura Ring data and Cla
 - Top 3 actionable things to do today, generated from your real data
 - Oura Ring integration: sleep, HRV, resting HR, activity
 - Google Drive integration: upload reports to `drive/me/health`, auto-classify and ingest
-- Supported report types: blood test, urine test, genetic test, sperm test, doctor conclusion, prescription
+- Supported report types: blood test, urine test, genetic test, sperm test, health check, doctor conclusion, prescription
 - **Medical image analysis** (MRI, X-ray, CT): Claude Vision detects tumours, ligament tears, meniscus damage, fractures, disc herniations, and more
+- **Genetic variant awareness**: MTHFR, Factor V Leiden, COMT, SOD2, VDR, FTO, APOE, HFE — automatically factored into daily recommendations
 - Research-backed actions from top journals (NEJM, The Lancet, JAMA)
 - Rule-based recommendations engine (CLI + web UI)
 
-## Quick start
+## Deploy on Mac Mini (recommended)
 
-### 1) Install
+One-command setup that auto-starts on boot:
+
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+git clone https://github.com/Semenka/personal-doctor-python.git
+cd personal-doctor-python
+./setup-mac.sh
 ```
 
-### 2) Set environment variables
+This creates a Python venv, installs everything, prompts for credentials, installs a macOS launch agent (auto-starts on boot, restarts on crash), and starts the server.
+
+**After setup:**
+
+| What | How |
+|------|-----|
+| Web dashboard | http://localhost:8000 |
+| Health check | `curl http://localhost:8000/health` |
+| Trigger pipeline now | `curl -X POST http://localhost:8000/run` |
+| Last advice (JSON) | `curl http://localhost:8000/advice` |
+| View logs | `tail -f ~/personal-doctor/logs/personal-doctor.log` |
+| Stop service | `launchctl unload ~/Library/LaunchAgents/com.personal-doctor.plist` |
+| Start service | `launchctl load ~/Library/LaunchAgents/com.personal-doctor.plist` |
+| Uninstall | `./setup-mac.sh --uninstall` |
+
+## Deploy with OpenClaw
+
+Chat with your health advisor via WhatsApp, Telegram, or Discord:
+
 ```bash
-export OURA_ACCESS_TOKEN=YOUR_TOKEN
-export ANTHROPIC_API_KEY=YOUR_KEY
-# Optional
-export DATABASE_URL=postgresql://user:password@localhost:5432/personal_doctor
-export GDRIVE_CREDENTIALS_DIR=/path/to/dir/with/credentials.json
-export OPENALEX_MAILTO=you@example.com
-export HEALTH_TIMEZONE=Europe/Paris
-# Email delivery (optional)
-export EMAIL_TO=you@example.com
-export SMTP_HOST=smtp.gmail.com
-export SMTP_PORT=587
-export SMTP_USER=you@gmail.com
-export SMTP_PASSWORD=app-password
+# Install OpenClaw first (if not already)
+npm install -g openclaw@latest && openclaw onboard
+
+# Then set up Personal Doctor
+git clone https://github.com/Semenka/personal-doctor-python.git
+cd personal-doctor-python
+./setup-openclaw.sh
+```
+
+Then tell OpenClaw: *"Run my health pipeline"*, *"Show my last advice"*, *"Sync my Oura data"*, etc.
+
+## Deploy on Google Cloud
+
+```bash
+./deploy-gcp.sh YOUR_PROJECT_ID
+```
+
+See the script for details (Cloud Run Job + Cloud Scheduler at 07:30).
+
+## Deploy with Docker
+
+```bash
+cp .env.example .env   # edit with your credentials
+docker compose up -d scheduler   # persistent scheduler
+# or
+docker compose run pipeline      # one-shot pipeline
 ```
 
 ### 3) Run the AI daily advisor
@@ -161,6 +194,15 @@ Every day at 07:30 (or on demand via CLI), the advisor:
 ## Storage
 
 If `DATABASE_URL` is set, data is stored in PostgreSQL (`daily_data`, `lab_documents`, `research_papers`, `research_recommendations`). Otherwise, JSON files are written to `data/ingested/`.
+
+## Deployment options
+
+| Method | Setup | Best for |
+|--------|-------|----------|
+| **Mac Mini** | `./setup-mac.sh` | Always-on local server, privacy, free |
+| **OpenClaw** | `./setup-openclaw.sh` | Chat-driven via WhatsApp/Telegram/Discord |
+| **Google Cloud** | `./deploy-gcp.sh` | Serverless, no hardware needed (~$0.20/mo) |
+| **Docker** | `docker compose up` | Portable, any server |
 
 ## Notes
 Personalize signal thresholds in `app/recommendations.py`.
