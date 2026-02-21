@@ -1,7 +1,7 @@
-"""Medical image analysis powered by Claude Opus 4.6 Vision.
+"""Medical image analysis powered by Gemini 3 Flash Vision.
 
 Downloads MRI/X-ray/CT/ultrasound images from Google Drive and sends them
-to Claude for radiological analysis.  The model flags potential pathologies
+to Gemini for radiological analysis.  The model flags potential pathologies
 (tumours, ligament tears, meniscus damage, fractures, disc herniations, etc.)
 and returns a structured report stored alongside other health data.
 """
@@ -14,11 +14,12 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import anthropic
+from google import genai
+from google.genai import types
 
 from .config import SyncConfig
 
-MODEL = "claude-opus-4-6"
+MODEL = "gemini-3-flash-preview"
 
 # Filename / MIME patterns that indicate a medical image
 IMAGE_MIMES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
@@ -87,16 +88,15 @@ def analyze_image(
     image_path: Path,
     filename: str | None = None,
 ) -> Dict[str, Any]:
-    """Send a local image to Claude Vision for radiological analysis.
+    """Send a local image to Gemini Vision for radiological analysis.
 
     Returns a dict with the analysis text and metadata.
     """
-    if not config.anthropic_api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY is required for image analysis")
+    if not config.google_api_key:
+        raise RuntimeError("GOOGLE_API_KEY is required for image analysis")
 
     fname = filename or image_path.name
     image_bytes = image_path.read_bytes()
-    b64_data = base64.standard_b64encode(image_bytes).decode("ascii")
 
     # Determine media type
     suffix = image_path.suffix.lower()
@@ -109,40 +109,27 @@ def analyze_image(
     }
     media_type = media_types.get(suffix, "image/jpeg")
 
-    client = anthropic.Anthropic(api_key=config.anthropic_api_key)
-    response = client.messages.create(
+    client = genai.Client(api_key=config.google_api_key)
+    response = client.models.generate_content(
         model=MODEL,
-        max_tokens=1500,
-        system=SYSTEM_PROMPT,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": media_type,
-                            "data": b64_data,
-                        },
-                    },
-                    {
-                        "type": "text",
-                        "text": (
-                            f"Please analyze this medical image.\n"
-                            f"Filename: {fname}\n"
-                            f"Look for any pathologies including but not limited to: "
-                            f"cancer, tumours, ligament tears, meniscus damage, "
-                            f"fractures, disc herniations, degenerative changes, "
-                            f"effusions, and any other abnormalities."
-                        ),
-                    },
-                ],
-            }
+        contents=[
+            types.Part.from_bytes(data=image_bytes, mime_type=media_type),
+            (
+                f"Please analyze this medical image.\n"
+                f"Filename: {fname}\n"
+                f"Look for any pathologies including but not limited to: "
+                f"cancer, tumours, ligament tears, meniscus damage, "
+                f"fractures, disc herniations, degenerative changes, "
+                f"effusions, and any other abnormalities."
+            ),
         ],
+        config=types.GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT,
+            max_output_tokens=1500,
+        ),
     )
 
-    analysis_text = response.content[0].text
+    analysis_text = response.text
 
     # Extract severity from the analysis
     severity = "UNKNOWN"

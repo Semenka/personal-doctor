@@ -14,15 +14,20 @@ def _build_analytics(day: date, payload: Dict[str, Any]) -> Dict[str, Any]:
     """Build a human-readable analytics summary from an Oura daily payload."""
     sleep_hours = payload.get("sleep_hours", 0)
     sleep_quality = payload.get("sleep_quality", 0)
+    readiness_score = payload.get("readiness_score", 0)
     steps = payload.get("steps", 0)
     hrv = payload.get("hrv", 0)
     resting_hr = payload.get("resting_hr", 0)
     active_minutes = payload.get("active_minutes", 0)
+    deep_sleep_min = payload.get("deep_sleep_min", 0)
+    rem_sleep_min = payload.get("rem_sleep_min", 0)
+    efficiency = payload.get("efficiency", 0)
+    temp_deviation = payload.get("temp_deviation", 0)
 
-    # Sleep assessment
-    if sleep_hours >= 7.5 and sleep_quality >= 7:
+    # Sleep assessment (sleep_quality is 0-100 from Oura)
+    if sleep_hours >= 7.5 and sleep_quality >= 75:
         sleep_assessment = "Excellent"
-    elif sleep_hours >= 6.5 or sleep_quality >= 6:
+    elif sleep_hours >= 6.5 or sleep_quality >= 60:
         sleep_assessment = "Adequate"
     else:
         sleep_assessment = "Poor — prioritize recovery today"
@@ -50,10 +55,15 @@ def _build_analytics(day: date, payload: Dict[str, Any]) -> Dict[str, Any]:
         "metrics": {
             "sleep_hours": sleep_hours,
             "sleep_quality_score": sleep_quality,
+            "readiness_score": readiness_score,
+            "deep_sleep_min": deep_sleep_min,
+            "rem_sleep_min": rem_sleep_min,
+            "efficiency": efficiency,
             "steps": steps,
             "active_minutes": active_minutes,
             "resting_heart_rate": resting_hr,
             "heart_rate_variability": hrv,
+            "temp_deviation": temp_deviation,
         },
         "assessments": {
             "sleep": sleep_assessment,
@@ -61,8 +71,8 @@ def _build_analytics(day: date, payload: Dict[str, Any]) -> Dict[str, Any]:
             "activity": activity_assessment,
         },
         "summary": (
-            f"Sleep: {sleep_hours}h (score {sleep_quality}/10) — {sleep_assessment}. "
-            f"Recovery: HRV {hrv}ms, RHR {resting_hr}bpm — {recovery_assessment}. "
+            f"Sleep: {sleep_hours}h (score {sleep_quality}/100, deep {deep_sleep_min}min, REM {rem_sleep_min}min) — {sleep_assessment}. "
+            f"Recovery: HRV {hrv}ms, RHR {resting_hr}bpm, readiness {readiness_score}/100 — {recovery_assessment}. "
             f"Activity: {steps} steps, {active_minutes} active min — {activity_assessment}."
         ),
     }
@@ -101,9 +111,14 @@ def upload_analytics_to_drive(config: SyncConfig, analytics: Dict[str, Any]) -> 
     text = (
         f"Oura Ring — {day_str}\n"
         f"{'='*40}\n\n"
-        f"Sleep:    {metrics.get('sleep_hours', 0)}h  (score {metrics.get('sleep_quality_score', 0)}/10) — {assessments.get('sleep', 'N/A')}\n"
+        f"Sleep:    {metrics.get('sleep_hours', 0)}h  (score {metrics.get('sleep_quality_score', 0)}/100) — {assessments.get('sleep', 'N/A')}\n"
+        f"  Deep:   {metrics.get('deep_sleep_min', 0)} min\n"
+        f"  REM:    {metrics.get('rem_sleep_min', 0)} min\n"
+        f"  Efficiency: {metrics.get('efficiency', 0)}%\n"
         f"HRV:      {metrics.get('heart_rate_variability', 0)} ms\n"
         f"RHR:      {metrics.get('resting_heart_rate', 0)} bpm\n"
+        f"Readiness: {metrics.get('readiness_score', 0)}/100\n"
+        f"Temp dev: {metrics.get('temp_deviation', 0)}°C\n"
         f"Steps:    {metrics.get('steps', 0)}\n"
         f"Active:   {metrics.get('active_minutes', 0)} min\n\n"
         f"Recovery: {assessments.get('recovery', 'N/A')}\n"

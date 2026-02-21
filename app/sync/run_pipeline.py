@@ -3,7 +3,7 @@
 Runs the full daily health pipeline in sequence:
   1. Oura Ring data sync (with retries)
   2. Google Drive health folder scan (if configured)
-  3. AI Daily Advisor generation (Claude Opus 4.6)
+  3. AI Daily Advisor generation (Gemini 3 Flash)
   4. Email delivery
 
 Designed to be triggered by Cloud Scheduler → Cloud Run Job.
@@ -91,10 +91,10 @@ def main() -> int:
     print()
 
     # ── Step 3: AI Daily Advisor ────────────────────────────────────
-    print("[3/4] AI Daily Advisor (Claude Opus 4.6)...")
+    print("[3/4] AI Daily Advisor (Gemini 3 Flash)...")
     advice = None
-    if not config.anthropic_api_key:
-        print("  FAIL: ANTHROPIC_API_KEY not set.")
+    if not config.google_api_key:
+        print("  FAIL: GOOGLE_API_KEY not set.")
     else:
         from .daily_advisor import (
             email_advice,
@@ -135,8 +135,7 @@ def main() -> int:
                     f"## Daily Health Plan — {day.isoformat()}\n\n"
                     f"**Advisor generation failed.**\n\n"
                     f"Error: {exc}\n\n"
-                    "Please check Cloud Run logs and "
-                    "https://console.anthropic.com for details."
+                    "Please check logs for details."
                 ),
                 "context_summary": {
                     "oura_available": False,
@@ -152,7 +151,7 @@ def main() -> int:
     # ── Step 4: Email delivery ──────────────────────────────────────
     print("[4/4] Email delivery...")
     if not advice:
-        print("  SKIP: No advice to send (ANTHROPIC_API_KEY missing).")
+        print("  SKIP: No advice to send (GOOGLE_API_KEY missing).")
         return 1
 
     if not config.email_to or not config.smtp_host:

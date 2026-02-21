@@ -36,7 +36,7 @@ def _get_credentials(config: SyncConfig) -> Credentials:
             "GDRIVE_CREDENTIALS_DIR not set. "
             "Point it to a directory containing credentials.json from Google Cloud Console."
         )
-    creds_dir = Path(creds_dir)
+    creds_dir = Path(creds_dir).expanduser()
     token_path = creds_dir / "token.json"
     client_secrets = creds_dir / "credentials.json"
 

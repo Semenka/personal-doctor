@@ -17,6 +17,7 @@ ENV/
 .env
 .env.local
 .env.production
+.env.save
 !.env.example
 
 # IDE

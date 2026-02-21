@@ -1,6 +1,6 @@
-"""Daily AI health advisor powered by Claude Opus 4.6.
+"""Daily AI health advisor powered by Gemini 3 Flash.
 
-Gathers Oura Ring data and any available health reports, then asks Claude
+Gathers Oura Ring data and any available health reports, then asks Gemini
 to act as a general practitioner focused on maximizing sperm motility and
 conception chances while maintaining high energy levels.
 """
@@ -11,12 +11,13 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import anthropic
+from google import genai
+from google.genai import types
 
 from .config import SyncConfig
 from .storage import load_daily_payload, load_lab_documents
 
-MODEL = "claude-opus-4-6"
+MODEL = "gemini-3-flash-preview"
 
 
 def _gather_context(
@@ -58,18 +59,41 @@ def _build_prompt(context: Dict[str, Any]) -> str:
     today = context["date"]
 
     # Format Oura section
-    if oura:
+    if oura and (oura.get("sleep_hours", 0) > 0 or oura.get("sleep_quality", 0) > 0):
+        activity_note = ""
+        if oura.get("activity_is_previous_day"):
+            activity_note = " (previous day — today's not yet available)"
+
         oura_section = f"""## Today's Oura Ring data ({today})
-- Sleep: {oura.get('sleep_hours', 'N/A')} hours, quality score {oura.get('sleep_quality', 'N/A')}/10
+**Sleep:**
+- Total sleep: {oura.get('sleep_hours', 'N/A')} hours (score {oura.get('sleep_quality', 'N/A')}/100)
+- Deep sleep: {oura.get('deep_sleep_min', 'N/A')} min
+- REM sleep: {oura.get('rem_sleep_min', 'N/A')} min
+- Light sleep: {oura.get('light_sleep_min', 'N/A')} min
+- Efficiency: {oura.get('efficiency', 'N/A')}%
+
+**Heart & Recovery:**
 - Resting heart rate: {oura.get('resting_hr', 'N/A')} bpm
+- Average heart rate (sleep): {oura.get('avg_hr', 'N/A')} bpm
 - Heart rate variability (HRV): {oura.get('hrv', 'N/A')} ms
+- Average breathing rate: {oura.get('avg_breath', 'N/A')} breaths/min
+- Readiness score: {oura.get('readiness_score', 'N/A')}/100
+- Temperature deviation: {oura.get('temp_deviation', 'N/A')}°C
+
+**Activity{activity_note}:**
 - Steps: {oura.get('steps', 'N/A')}
 - Active minutes: {oura.get('active_minutes', 'N/A')}
-- Calories: {oura.get('calories', 'N/A')}
-- Water intake: {oura.get('water_l', 'N/A')} L
-- Sitting hours: {oura.get('sitting_hours', 'N/A')}
-- Mood: {oura.get('mood', 'N/A')}/10
-- Stress: {oura.get('stress', 'N/A')}/10"""
+- Active calories: {oura.get('active_calories', 'N/A')}
+- Total calories: {oura.get('calories', 'N/A')}
+- Activity score: {oura.get('activity_score', 'N/A')}/100
+- Sitting hours: {oura.get('sitting_hours', 'N/A')}"""
+    elif oura:
+        oura_section = (
+            "## Oura Ring data\n"
+            "Oura returned scores but no detailed sleep data for today. "
+            f"Sleep score: {oura.get('sleep_quality', 'N/A')}/100, "
+            f"Readiness score: {oura.get('readiness_score', 'N/A')}/100."
+        )
     else:
         oura_section = "## Oura Ring data\nNo data available for today."
 
@@ -186,13 +210,13 @@ def generate_daily_advice(
     config: SyncConfig,
     day: date | None = None,
 ) -> Dict[str, Any]:
-    """Generate daily health advice using Claude Opus 4.6."""
+    """Generate daily health advice using Gemini 3 Flash."""
     if day is None:
         day = datetime.now(tz=config.timezone).date()
 
-    if not config.anthropic_api_key:
+    if not config.google_api_key:
         raise RuntimeError(
-            "ANTHROPIC_API_KEY is required for the daily advisor. "
+            "GOOGLE_API_KEY is required for the daily advisor. "
             "Set it in your environment."
         )
 
@@ -200,15 +224,17 @@ def generate_daily_advice(
     user_message = _build_prompt(context)
     system = SYSTEM_PROMPT.replace("{date}", day.isoformat())
 
-    client = anthropic.Anthropic(api_key=config.anthropic_api_key)
-    response = client.messages.create(
+    client = genai.Client(api_key=config.google_api_key)
+    response = client.models.generate_content(
         model=MODEL,
-        max_tokens=1500,
-        system=system,
-        messages=[{"role": "user", "content": user_message}],
+        contents=user_message,
+        config=types.GenerateContentConfig(
+            system_instruction=system,
+            max_output_tokens=1500,
+        ),
     )
 
-    advice_text = response.content[0].text
+    advice_text = response.text
 
     result = {
         "report_type": "daily_advisor",

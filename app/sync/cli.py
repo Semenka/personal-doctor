@@ -98,8 +98,8 @@ def main() -> None:
             upload_advice_to_drive,
         )
 
-        if not config.anthropic_api_key:
-            raise SystemExit("ANTHROPIC_API_KEY is required for the daily advisor")
+        if not config.google_api_key:
+            raise SystemExit("GOOGLE_API_KEY is required for the daily advisor")
         advice = generate_daily_advice(config, day)
         print_advice(advice)
         local = save_advice_local(config, advice)
@@ -138,8 +138,8 @@ def main() -> None:
     if args.source == "scan":
         if not args.path:
             raise SystemExit("--path is required for scan source (path to image file)")
-        if not config.anthropic_api_key:
-            raise SystemExit("ANTHROPIC_API_KEY is required for image analysis")
+        if not config.google_api_key:
+            raise SystemExit("GOOGLE_API_KEY is required for image analysis")
 
         from .image_analyzer import (
             analyze_image,
@@ -151,7 +151,7 @@ def main() -> None:
         if not path.exists():
             raise SystemExit(f"File not found: {path}")
 
-        print(f"Analyzing {path.name} with Claude Vision...")
+        print(f"Analyzing {path.name} with Gemini Vision...")
         analysis = analyze_image(config, path)
         severity = analysis.get("severity", "UNKNOWN")
 

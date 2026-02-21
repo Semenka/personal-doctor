@@ -53,7 +53,7 @@ def create_app() -> FastAPI:
             "timezone": str(config.timezone),
             "services": {
                 "oura": bool(config.oura_access_token),
-                "anthropic": bool(config.anthropic_api_key),
+                "gemini": bool(config.google_api_key),
                 "smtp": bool(config.smtp_host and config.smtp_password),
                 "gdrive": bool(config.gdrive_credentials_dir),
             },
