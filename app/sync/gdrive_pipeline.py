@@ -86,8 +86,8 @@ def sync_drive_reports(
         from .image_analyzer import is_medical_image
 
         if is_medical_image(name, mime):
-            # Analyze with Claude Vision — don't download twice
-            if config.anthropic_api_key:
+            # Analyze with Gemini Vision — don't download twice
+            if config.google_api_key:
                 try:
                     from .image_analyzer import (
                         analyze_image_from_drive,
@@ -120,7 +120,7 @@ def sync_drive_reports(
                         "error": str(exc),
                     })
             else:
-                print(f"  Skipped medical image {name}: ANTHROPIC_API_KEY not set")
+                print(f"  Skipped medical image {name}: GOOGLE_API_KEY not set")
                 processed_ids.append(file_id)
                 results.append({"file": name, "kind": "medical_image", "file_id": file_id})
             continue

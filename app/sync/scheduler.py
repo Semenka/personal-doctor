@@ -20,7 +20,7 @@ def start_scheduler() -> None:
     scheduler.add_job(run_research_sync, "cron", hour=7, minute=10, id="research_daily")
     # 07:20 — Oura Ring data sync
     scheduler.add_job(run_oura_sync, "cron", hour=7, minute=20, id="oura_daily")
-    # 07:30 — AI daily advisor (Claude Opus 4.6): analyse Oura + reports → top 3 plan
+    # 07:30 — AI daily advisor (Gemini 3.1 Flash-Lite): analyse Oura + reports → top 3 plan
     scheduler.add_job(run_daily_advisor, "cron", hour=7, minute=30, id="advisor_daily")
 
     scheduler.start()
@@ -29,7 +29,7 @@ def start_scheduler() -> None:
         "  07:00  Google Drive health folder scan\n"
         "  07:10  Research paper recommendations\n"
         "  07:20  Oura Ring data sync\n"
-        "  07:30  AI daily advisor (Claude Opus 4.6)"
+        "  07:30  AI daily advisor (Gemini 3.1 Flash-Lite)"
     )
 
     try:
@@ -126,8 +126,8 @@ def run_daily_advisor() -> None:
     from datetime import datetime
 
     config = load_config()
-    if not config.anthropic_api_key:
-        print("Skipping daily advisor: ANTHROPIC_API_KEY not set.")
+    if not config.google_api_key:
+        print("Skipping daily advisor: GOOGLE_API_KEY not set.")
         return
 
     day = datetime.now(tz=config.timezone).date()
@@ -157,11 +157,11 @@ def run_daily_advisor() -> None:
                         f"Error: {exc}\n\n"
                         "The AI advisor could not generate today's plan. "
                         "This may be caused by:\n"
-                        "- Anthropic API credit balance too low\n"
+                        "- Google API credit balance too low\n"
                         "- Temporary API outage\n"
                         "- Invalid API key\n\n"
                         "Please check the server logs and "
-                        "https://console.anthropic.com for details."
+                        "https://aistudio.google.com for details."
                     ),
                     "context_summary": {
                         "oura_available": False,

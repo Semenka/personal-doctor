@@ -110,7 +110,7 @@ create_or_update_secret() {
     fi
 }
 
-create_or_update_secret "pd-anthropic-key"    "Anthropic API key (sk-ant-...)"
+create_or_update_secret "pd-google-key"       "Google API key (from aistudio.google.com)"
 create_or_update_secret "pd-oura-token"       "Oura Ring access token"
 create_or_update_secret "pd-smtp-password"    "Yahoo SMTP app password"
 create_or_update_secret "pd-smtp-user"        "SMTP username (e.g. user@yahoo.com)"
@@ -149,7 +149,7 @@ echo "Deploying Cloud Run Job..."
 
 # Build secrets flag
 SECRETS_FLAG=""
-SECRETS_FLAG+="ANTHROPIC_API_KEY=pd-anthropic-key:latest,"
+SECRETS_FLAG+="GOOGLE_API_KEY=pd-google-key:latest,"
 SECRETS_FLAG+="OURA_ACCESS_TOKEN=pd-oura-token:latest,"
 SECRETS_FLAG+="SMTP_PASSWORD=pd-smtp-password:latest,"
 SECRETS_FLAG+="SMTP_USER=pd-smtp-user:latest,"

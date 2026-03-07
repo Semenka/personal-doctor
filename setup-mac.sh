@@ -106,7 +106,7 @@ if [ -f "$ENV_FILE" ]; then
     # Validate required variables
     MISSING=()
     source "$ENV_FILE" 2>/dev/null || true
-    [ -z "${ANTHROPIC_API_KEY:-}" ] && MISSING+=("ANTHROPIC_API_KEY")
+    [ -z "${GOOGLE_API_KEY:-}" ] && MISSING+=("GOOGLE_API_KEY")
     [ -z "${OURA_ACCESS_TOKEN:-}" ] && MISSING+=("OURA_ACCESS_TOKEN")
     [ -z "${EMAIL_TO:-}" ] && MISSING+=("EMAIL_TO")
     [ -z "${SMTP_HOST:-}" ] && MISSING+=("SMTP_HOST")
@@ -125,7 +125,7 @@ else
     echo "  nano $ENV_FILE"
     echo ""
     echo "  Required:"
-    echo "    ANTHROPIC_API_KEY   — from console.anthropic.com"
+    echo "    GOOGLE_API_KEY      — from aistudio.google.com"
     echo "    OURA_ACCESS_TOKEN   — from cloud.ouraring.com"
     echo "    EMAIL_TO            — your email address"
     echo "    SMTP_HOST           — smtp.yahoo.com"
@@ -163,7 +163,7 @@ step "Validating configuration"
 from app.sync.config import load_config
 cfg = load_config()
 checks = {
-    'Anthropic API key': bool(cfg.anthropic_api_key),
+    'Google API key': bool(cfg.google_api_key),
     'Oura token': bool(cfg.oura_access_token),
     'SMTP configured': bool(cfg.smtp_host and cfg.smtp_password),
     'Email recipient': bool(cfg.email_to),

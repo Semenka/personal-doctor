@@ -1,14 +1,14 @@
 # Personal Daily Health Advisor
 
-Python CLI + web UI for daily health analysis, powered by Oura Ring data and Claude Opus 4.6 AI advisor.
+Python CLI + web UI for daily health analysis, powered by Oura Ring data and Gemini 3.1 Flash-Lite AI advisor.
 
 ## Features
-- Daily AI health advisor (Claude Opus 4.6) focused on **sperm motility** and **energy**
+- Daily AI health advisor (Gemini 3.1 Flash-Lite) focused on **sperm motility** and **energy**
 - Top 3 actionable things to do today, generated from your real data
 - Oura Ring integration: sleep, HRV, resting HR, activity
 - Google Drive integration: upload reports to `drive/me/health`, auto-classify and ingest
 - Supported report types: blood test, urine test, genetic test, sperm test, health check, doctor conclusion, prescription
-- **Medical image analysis** (MRI, X-ray, CT): Claude Vision detects tumours, ligament tears, meniscus damage, fractures, disc herniations, and more
+- **Medical image analysis** (MRI, X-ray, CT): Gemini Vision detects tumours, ligament tears, meniscus damage, fractures, disc herniations, and more
 - **Genetic variant awareness**: MTHFR, Factor V Leiden, COMT, SOD2, VDR, FTO, APOE, HFE — automatically factored into daily recommendations
 - Research-backed actions from top journals (NEJM, The Lancet, JAMA)
 - Rule-based recommendations engine (CLI + web UI)
@@ -163,7 +163,7 @@ My Drive/
       urine/                           ← urinalysis (auto: urine_test)
       conclusion/                      ← doctor conclusions
       prescription/                    ← prescriptions
-      knee_mri.jpg                     ← medical images (auto-analyzed by Claude Vision)
+      knee_mri.jpg                     ← medical images (auto-analyzed by Gemini Vision)
       2026/                            ← calendar output (auto-created)
         02/
           10/
@@ -181,8 +181,8 @@ Every day at 07:30 (or on demand via CLI), the advisor:
 
 1. Reads today's Oura Ring data (sleep hours, HRV, resting HR, steps, activity)
 2. Loads all available health reports (sperm analysis, blood work, genetic tests, etc.)
-3. Sends everything to **Claude Opus 4.6** with the system prompt: *"You are an experienced GP and reproductive health specialist. Your patient is actively trying to conceive."*
-4. Claude returns a structured daily plan:
+3. Sends everything to **Gemini 3.1 Flash-Lite** with the system prompt: *"You are an experienced GP and reproductive health specialist. Your patient is actively trying to conceive."*
+4. Gemini returns a structured daily plan:
    - **Top 3 actions today** — specific, timed, with dosages and direct links to sperm motility/energy
    - **Key metrics to watch** — which numbers are good, which need attention
    - **Nutrition focus** — one meal/supplement recommendation tied to the data

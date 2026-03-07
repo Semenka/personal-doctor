@@ -20,7 +20,7 @@ class SyncConfig:
     database_url: str | None
     openalex_mailto: str | None
     gdrive_credentials_dir: str | None
-    anthropic_api_key: str | None
+    google_api_key: str | None
     email_to: str | None
     smtp_host: str | None
     smtp_port: int | None
@@ -36,7 +36,7 @@ def load_config() -> SyncConfig:
     database_url = os.getenv("DATABASE_URL")
     openalex_mailto = os.getenv("OPENALEX_MAILTO")
     gdrive_credentials_dir = os.getenv("GDRIVE_CREDENTIALS_DIR")
-    anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+    google_api_key = os.getenv("GOOGLE_API_KEY")
     email_to = os.getenv("EMAIL_TO")
     smtp_host = os.getenv("SMTP_HOST")
     smtp_port_str = os.getenv("SMTP_PORT", "465")
@@ -49,7 +49,7 @@ def load_config() -> SyncConfig:
         database_url=database_url,
         openalex_mailto=openalex_mailto,
         gdrive_credentials_dir=gdrive_credentials_dir,
-        anthropic_api_key=anthropic_api_key,
+        google_api_key=google_api_key,
         email_to=email_to,
         smtp_host=smtp_host,
         smtp_port=int(smtp_port_str) if smtp_port_str else 587,

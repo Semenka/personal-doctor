@@ -1,12 +1,12 @@
 ---
 name: personal-doctor
-description: AI health advisor that collects Oura Ring data, scans Google Drive medical reports, generates daily health plans with Claude Opus 4.6, and emails personalized recommendations focused on fertility and energy optimization.
-metadata: { "openclaw": { "emoji": "🩺", "requires": { "bins": ["python3"], "env": ["ANTHROPIC_API_KEY", "OURA_ACCESS_TOKEN"] }, "primaryEnv": "ANTHROPIC_API_KEY" } }
+description: AI health advisor that collects Oura Ring data, scans Google Drive medical reports, generates daily health plans with Gemini 3.1 Flash-Lite, and emails personalized recommendations focused on fertility and energy optimization.
+metadata: { "openclaw": { "emoji": "🩺", "requires": { "bins": ["python3"], "env": ["GOOGLE_API_KEY", "OURA_ACCESS_TOKEN"] }, "primaryEnv": "GOOGLE_API_KEY" } }
 ---
 
 # Personal Doctor
 
-Your AI health advisor powered by Claude Opus 4.6. It collects wearable data from Oura Ring, scans medical reports from Google Drive, and generates a personalized daily health plan focused on sperm motility and energy optimization — delivered to your email every morning.
+Your AI health advisor powered by Gemini 3.1 Flash-Lite. It collects wearable data from Oura Ring, scans medical reports from Google Drive, and generates a personalized daily health plan focused on sperm motility and energy optimization — delivered to your email every morning.
 
 ## Quick commands
 
@@ -26,7 +26,7 @@ The Personal Doctor runs as a local server on your Mac Mini with a background sc
 |------|-----|
 | 07:00 | Google Drive health folder scan (blood tests, genetic reports, health check-ups, prescriptions, MRI/X-ray) |
 | 07:20 | Oura Ring data sync (sleep score, HRV, resting HR, steps, readiness) |
-| 07:30 | AI Daily Advisor generates plan with Claude Opus 4.6 → saves locally → uploads to Drive → emails to you |
+| 07:30 | AI Daily Advisor generates plan with Gemini 3.1 Flash-Lite → saves locally → uploads to Drive → emails to you |
 
 ## Running the pipeline
 
@@ -87,7 +87,7 @@ The advisor combines data from multiple sources:
    - `prescription/` — prescriptions
    - `conclusion/` — doctor conclusions
    - Root files and MRI/X-ray images are also detected
-3. **Image analysis** — Claude Vision analyzes MRI, X-ray, CT scans for pathologies
+3. **Image analysis** — Gemini Vision analyzes MRI, X-ray, CT scans for pathologies
 
 ## Environment variables
 
@@ -95,7 +95,7 @@ These must be set in `~/personal-doctor/.env`:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `ANTHROPIC_API_KEY` | Yes | Claude API key from console.anthropic.com |
+| `GOOGLE_API_KEY` | Yes | Google API key from aistudio.google.com |
 | `OURA_ACCESS_TOKEN` | Yes | Oura Ring API token from cloud.ouraring.com |
 | `EMAIL_TO` | Yes | Recipient email address |
 | `SMTP_HOST` | Yes | SMTP server (e.g. smtp.yahoo.com) |

@@ -1,6 +1,6 @@
-"""Daily AI health advisor powered by Claude Opus 4.6.
+"""Daily AI health advisor powered by Gemini 3.1 Flash-Lite.
 
-Gathers Oura Ring data and any available health reports, then asks Claude
+Gathers Oura Ring data and any available health reports, then asks Gemini
 to act as a general practitioner focused on maximizing sperm motility and
 conception chances while maintaining high energy levels.
 """
@@ -11,12 +11,13 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import anthropic
+from google import genai
+from google.genai import types
 
 from .config import SyncConfig
 from .storage import load_daily_payload, load_lab_documents
 
-MODEL = "claude-opus-4-6"
+MODEL = "gemini-3.1-flash-lite-preview"
 
 
 def _gather_context(
@@ -186,13 +187,13 @@ def generate_daily_advice(
     config: SyncConfig,
     day: date | None = None,
 ) -> Dict[str, Any]:
-    """Generate daily health advice using Claude Opus 4.6."""
+    """Generate daily health advice using Gemini 3.1 Flash-Lite."""
     if day is None:
         day = datetime.now(tz=config.timezone).date()
 
-    if not config.anthropic_api_key:
+    if not config.google_api_key:
         raise RuntimeError(
-            "ANTHROPIC_API_KEY is required for the daily advisor. "
+            "GOOGLE_API_KEY is required for the daily advisor. "
             "Set it in your environment."
         )
 
@@ -200,15 +201,17 @@ def generate_daily_advice(
     user_message = _build_prompt(context)
     system = SYSTEM_PROMPT.replace("{date}", day.isoformat())
 
-    client = anthropic.Anthropic(api_key=config.anthropic_api_key)
-    response = client.messages.create(
+    client = genai.Client(api_key=config.google_api_key)
+    response = client.models.generate_content(
         model=MODEL,
-        max_tokens=1500,
-        system=system,
-        messages=[{"role": "user", "content": user_message}],
+        contents=user_message,
+        config=types.GenerateContentConfig(
+            system_instruction=system,
+            max_output_tokens=1500,
+        ),
     )
 
-    advice_text = response.content[0].text
+    advice_text = response.text
 
     result = {
         "report_type": "daily_advisor",
