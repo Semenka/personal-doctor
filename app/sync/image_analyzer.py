@@ -1,4 +1,4 @@
-"""Medical image analysis powered by Gemini 3 Flash Vision.
+"""Medical image analysis powered by Gemini 3.1 Flash Lite Vision.
 
 Downloads MRI/X-ray/CT/ultrasound images from Google Drive and sends them
 to Gemini for radiological analysis.  The model flags potential pathologies
@@ -19,7 +19,7 @@ from google.genai import types
 
 from .config import SyncConfig
 
-MODEL = "gemini-3-flash-preview"
+DEFAULT_MODEL = "gemini-3.1-flash-lite-preview"
 
 # Filename / MIME patterns that indicate a medical image
 IMAGE_MIMES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
@@ -109,9 +109,10 @@ def analyze_image(
     }
     media_type = media_types.get(suffix, "image/jpeg")
 
+    model = config.gemini_model or DEFAULT_MODEL
     client = genai.Client(api_key=config.google_api_key)
     response = client.models.generate_content(
-        model=MODEL,
+        model=model,
         contents=[
             types.Part.from_bytes(data=image_bytes, mime_type=media_type),
             (

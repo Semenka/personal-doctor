@@ -26,6 +26,8 @@ class SyncConfig:
     smtp_port: int | None
     smtp_user: str | None
     smtp_password: str | None
+    gemini_model: str = "gemini-3.1-flash-lite-preview"
+    server_url: str = "http://localhost:8000"
     oura_base_url: str = "https://api.ouraring.com/v2/usercollection"
 
 
@@ -42,6 +44,8 @@ def load_config() -> SyncConfig:
     smtp_port_str = os.getenv("SMTP_PORT", "465")
     smtp_user = os.getenv("SMTP_USER")
     smtp_password = os.getenv("SMTP_PASSWORD")
+    server_url = os.getenv("SERVER_URL", "http://localhost:8000")
+    gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite-preview")
     return SyncConfig(
         data_dir=data_dir,
         oura_access_token=token,
@@ -55,4 +59,6 @@ def load_config() -> SyncConfig:
         smtp_port=int(smtp_port_str) if smtp_port_str else 587,
         smtp_user=smtp_user,
         smtp_password=smtp_password,
+        gemini_model=gemini_model,
+        server_url=server_url.rstrip("/"),
     )

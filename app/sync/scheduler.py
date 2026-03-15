@@ -14,22 +14,19 @@ def start_scheduler() -> None:
     config = load_config()
     scheduler = BackgroundScheduler(timezone=config.timezone)
 
-    # 07:00 — Scan Google Drive for new health reports
-    scheduler.add_job(run_gdrive_sync, "cron", hour=7, minute=0, id="gdrive_daily")
-    # 07:10 — Research paper recommendations
-    scheduler.add_job(run_research_sync, "cron", hour=7, minute=10, id="research_daily")
-    # 07:20 — Oura Ring data sync
-    scheduler.add_job(run_oura_sync, "cron", hour=7, minute=20, id="oura_daily")
-    # 07:30 — AI daily advisor (Gemini 3 Flash): analyse Oura + reports → top 3 plan
-    scheduler.add_job(run_daily_advisor, "cron", hour=7, minute=30, id="advisor_daily")
+    # 07:30 — Scan Google Drive for new health reports
+    scheduler.add_job(run_gdrive_sync, "cron", hour=7, minute=30, id="gdrive_daily")
+    # 07:40 — Oura Ring data sync
+    scheduler.add_job(run_oura_sync, "cron", hour=7, minute=40, id="oura_daily")
+    # 08:00 — AI daily advisor (Gemini 3.1 Flash Lite): analyse Oura + reports → email
+    scheduler.add_job(run_daily_advisor, "cron", hour=8, minute=0, id="advisor_daily")
 
     scheduler.start()
     print(
         "Scheduler started:\n"
-        "  07:00  Google Drive health folder scan\n"
-        "  07:10  Research paper recommendations\n"
-        "  07:20  Oura Ring data sync\n"
-        "  07:30  AI daily advisor (Gemini 3 Flash)"
+        "  07:30  Google Drive health folder scan\n"
+        "  07:40  Oura Ring data sync\n"
+        "  08:00  AI daily advisor → email"
     )
 
     try:

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.personal-doctor.sync</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>cd ~/personal-doctor &amp;&amp; ./sync-and-relaunch.sh 2>&amp;1 | tee -a ~/personal-doctor/logs/sync.log</string>
+    </array>
+
+    <!-- Run daily at 06:50, before OpenClaw health pipeline starts at 07:00 -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>6</integer>
+        <key>Minute</key>
+        <integer>50</integer>
+    </dict>
+
+    <!-- Also run at load (catches up if Mac was asleep) -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/personal-doctor-sync-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/personal-doctor-sync-stderr.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+    </dict>
+</dict>
+</plist>

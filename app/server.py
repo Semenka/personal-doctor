@@ -14,10 +14,11 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 import uvicorn
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 # Configure logging to both stdout and file
 LOG_DIR = Path(os.getenv("HEALTH_LOG_DIR", os.path.expanduser("~/personal-doctor/logs")))
@@ -51,6 +52,7 @@ def create_app() -> FastAPI:
             "status": "ok",
             "timestamp": datetime.now(tz=config.timezone).isoformat(),
             "timezone": str(config.timezone),
+            "gemini_model": config.gemini_model,
             "services": {
                 "oura": bool(config.oura_access_token),
                 "gemini": bool(config.google_api_key),
@@ -103,6 +105,59 @@ def create_app() -> FastAPI:
         data = json.loads(files[0].read_text())
         return JSONResponse(data)
 
+    # ── Action tracking: mark done (clickable from email) ──
+    @dashboard_app.get("/action/done")
+    async def action_done(date: str, idx: int):
+        from app.sync.action_tracker import (
+            load_actions_with_sheets,
+            mark_action_done_with_sheets,
+        )
+
+        success = mark_action_done_with_sheets(config, date, idx)
+        actions = load_actions_with_sheets(config, date)
+        return HTMLResponse(_render_action_page(date, idx, actions, done=True, success=success))
+
+    @dashboard_app.get("/action/undo")
+    async def action_undo(date: str, idx: int):
+        from app.sync.action_tracker import (
+            load_actions_with_sheets,
+            mark_action_undone_with_sheets,
+        )
+
+        mark_action_undone_with_sheets(config, date, idx)
+        actions = load_actions_with_sheets(config, date)
+        return HTMLResponse(_render_action_page(date, idx, actions, done=False, success=True))
+
+    @dashboard_app.get("/actions")
+    async def view_actions(date: Optional[str] = None):
+        from app.sync.action_tracker import load_actions_with_sheets
+
+        if not date:
+            date = datetime.now(tz=config.timezone).strftime("%Y-%m-%d")
+        actions = load_actions_with_sheets(config, date)
+        return JSONResponse({"date": date, "actions": actions})
+
+    @dashboard_app.get("/dashboard", response_class=HTMLResponse)
+    async def dashboard():
+        from app.sync.action_tracker import (
+            compute_streaks,
+            load_action_history_with_sheets,
+        )
+        from app.sync.trend_analyzer import (
+            compute_metric_trends,
+            compute_rolling_averages,
+            load_oura_history,
+        )
+
+        today = datetime.now(tz=config.timezone).date()
+        history = load_action_history_with_sheets(config, num_days=7)
+        streaks = compute_streaks(config.data_dir)
+        oura_history = load_oura_history(config.data_dir, today)
+        averages = compute_rolling_averages(oura_history)
+        trends = compute_metric_trends(oura_history)
+
+        return _render_dashboard(today, history, streaks, averages, trends, config)
+
     return dashboard_app
 
 
@@ -121,9 +176,9 @@ def start_server():
 
     # Start background scheduler
     scheduler = BackgroundScheduler(timezone=config.timezone)
-    scheduler.add_job(run_gdrive_sync, "cron", hour=7, minute=0, id="gdrive_daily")
-    scheduler.add_job(run_oura_sync, "cron", hour=7, minute=20, id="oura_daily")
-    scheduler.add_job(run_daily_advisor, "cron", hour=7, minute=30, id="advisor_daily")
+    scheduler.add_job(run_gdrive_sync, "cron", hour=7, minute=30, id="gdrive_daily")
+    scheduler.add_job(run_oura_sync, "cron", hour=7, minute=40, id="oura_daily")
+    scheduler.add_job(run_daily_advisor, "cron", hour=8, minute=0, id="advisor_daily")
     scheduler.start()
 
     logger.info("=" * 60)
@@ -134,9 +189,9 @@ def start_server():
     logger.info(f"  Logs: {LOG_FILE}")
     logger.info("")
     logger.info("  Schedule:")
-    logger.info("    07:00  Google Drive health folder scan")
-    logger.info("    07:20  Oura Ring data sync")
-    logger.info("    07:30  AI daily advisor → email")
+    logger.info("    07:30  Google Drive health folder scan")
+    logger.info("    07:40  Oura Ring data sync")
+    logger.info("    08:00  AI daily advisor → email")
     logger.info("")
     logger.info("  Endpoints:")
     logger.info("    http://localhost:8000         Web dashboard")
@@ -155,6 +210,194 @@ def start_server():
         uvicorn.run(app, host=host, port=port, log_level="info")
     finally:
         scheduler.shutdown()
+
+
+def _render_action_page(
+    date: str, idx: int, actions: list, *, done: bool, success: bool
+) -> str:
+    """Render HTML confirmation page when user clicks Mark Done / Undo."""
+    if done and success:
+        banner = (
+            '<div style="background:#ecfdf5;border:1px solid #6ee7b7;border-radius:8px;'
+            'padding:16px;margin-bottom:20px;text-align:center;">'
+            '<span style="font-size:32px;">&#x2705;</span>'
+            '<h2 style="color:#059669;margin:8px 0 0;">Action completed!</h2></div>'
+        )
+    elif not done:
+        banner = (
+            '<div style="background:#fefce8;border:1px solid #fde68a;border-radius:8px;'
+            'padding:16px;margin-bottom:20px;text-align:center;">'
+            '<span style="font-size:32px;">&#x21A9;</span>'
+            '<h2 style="color:#d97706;margin:8px 0 0;">Action unmarked</h2></div>'
+        )
+    else:
+        banner = (
+            '<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;'
+            'padding:16px;margin-bottom:20px;text-align:center;">'
+            '<h2 style="color:#dc2626;margin:0;">Action not found</h2></div>'
+        )
+
+    rows = ""
+    for a in actions:
+        check = "&#x2705;" if a.get("done") else "&#x2B1C;"
+        title = a.get("title", "?")
+        if a.get("done"):
+            toggle_url = f"/action/undo?date={date}&idx={a['idx']}"
+            toggle_label = "Undo"
+        else:
+            toggle_url = f"/action/done?date={date}&idx={a['idx']}"
+            toggle_label = "Mark Done"
+        rows += (
+            f'<div style="padding:10px 0;border-bottom:1px solid #f3f4f6;">'
+            f'<span style="font-size:20px;margin-right:8px;">{check}</span>'
+            f'<strong>{a["idx"]+1}.</strong> {title} '
+            f'<a href="{toggle_url}" style="color:#2563eb;font-size:13px;'
+            f'margin-left:8px;">[{toggle_label}]</a></div>'
+        )
+
+    done_count = sum(1 for a in actions if a.get("done"))
+    progress = f"{done_count}/{len(actions)}" if actions else "0/0"
+
+    return f"""\
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Personal Doctor - Actions</title></head>
+<body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+max-width:500px;margin:40px auto;padding:20px;color:#1a1a1a;">
+{banner}
+<h3 style="color:#1e40af;">Today's Actions ({date}) &mdash; {progress} done</h3>
+{rows}
+<div style="margin-top:20px;">
+<a href="/dashboard" style="color:#2563eb;text-decoration:none;font-weight:600;">
+&#x1F4CA; View Dashboard</a></div>
+</body></html>"""
+
+
+def _render_dashboard(today, history, streaks, averages, trends, config) -> str:
+    """Render the full dashboard HTML page."""
+    # Streak badges
+    any_streak = streaks.get("any_action", 0)
+    all_streak = streaks.get("all_actions", 0)
+
+    streak_html = (
+        '<div style="display:flex;gap:16px;margin-bottom:24px;">'
+        f'<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;'
+        f'padding:12px 20px;text-align:center;">'
+        f'<div style="font-size:28px;font-weight:700;color:#059669;">{any_streak}</div>'
+        f'<div style="font-size:12px;color:#6b7280;">day streak (any action)</div></div>'
+        f'<div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;'
+        f'padding:12px 20px;text-align:center;">'
+        f'<div style="font-size:28px;font-weight:700;color:#2563eb;">{all_streak}</div>'
+        f'<div style="font-size:12px;color:#6b7280;">day streak (all actions)</div></div>'
+        "</div>"
+    )
+
+    # Action history table
+    history_rows = ""
+    for day_rec in history:
+        d = day_rec["date"]
+        actions = day_rec.get("actions", [])
+        done_count = sum(1 for a in actions if a.get("done"))
+        total = len(actions)
+        rate = day_rec.get("completion_rate", 0)
+        pct = f"{rate*100:.0f}%"
+        bar_color = "#059669" if rate >= 0.67 else "#d97706" if rate >= 0.34 else "#dc2626"
+        bar_width = max(rate * 100, 4)
+        action_names = " | ".join(
+            f"{'&#x2705;' if a.get('done') else '&#x2B1C;'} {a.get('title', '?')}"
+            for a in actions
+        )
+        history_rows += (
+            f'<tr><td style="padding:8px;font-weight:600;white-space:nowrap;">{d}</td>'
+            f'<td style="padding:8px;">{done_count}/{total}</td>'
+            f'<td style="padding:8px;"><div style="background:#e5e7eb;border-radius:4px;'
+            f'height:12px;width:100px;"><div style="background:{bar_color};height:12px;'
+            f'border-radius:4px;width:{bar_width}px;"></div></div></td>'
+            f'<td style="padding:8px;font-size:13px;color:#6b7280;">{action_names}</td></tr>'
+        )
+
+    if not history_rows:
+        history_rows = (
+            '<tr><td colspan="4" style="padding:16px;text-align:center;color:#9ca3af;">'
+            "No action history yet. Complete your first daily actions!</td></tr>"
+        )
+
+    # Metric trends table
+    metric_labels = {
+        "avg_hrv": ("HRV", "ms"),
+        "avg_resting_hr": ("Resting HR", "bpm"),
+        "avg_sleep_hours": ("Sleep", "hrs"),
+        "avg_deep_sleep_min": ("Deep Sleep", "min"),
+        "avg_steps": ("Steps", ""),
+        "avg_readiness": ("Readiness", "/100"),
+    }
+    trend_keys = {
+        "avg_hrv": "hrv",
+        "avg_resting_hr": "resting_hr",
+        "avg_sleep_hours": "sleep_hours",
+        "avg_deep_sleep_min": "deep_sleep_min",
+        "avg_steps": "steps",
+        "avg_readiness": "readiness_score",
+    }
+    trend_arrows = {"improving": "&#x2197; improving", "declining": "&#x2198; declining", "stable": "&#x2194; stable"}
+
+    metric_rows = ""
+    for key, (label, unit) in metric_labels.items():
+        avg_val = averages.get(key)
+        if avg_val is None:
+            continue
+        trend_key = trend_keys.get(key, "")
+        trend_dir = trends.get(trend_key, "stable")
+        trend_text = trend_arrows.get(trend_dir, trend_dir)
+        trend_color = "#059669" if trend_dir == "improving" else "#dc2626" if trend_dir == "declining" else "#6b7280"
+        metric_rows += (
+            f'<tr><td style="padding:8px;font-weight:500;">{label}</td>'
+            f'<td style="padding:8px;">{avg_val:.1f} {unit}</td>'
+            f'<td style="padding:8px;color:{trend_color};">{trend_text}</td></tr>'
+        )
+
+    if not metric_rows:
+        metric_rows = (
+            '<tr><td colspan="3" style="padding:16px;text-align:center;color:#9ca3af;">'
+            "No Oura data available for trend analysis.</td></tr>"
+        )
+
+    return f"""\
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Personal Doctor Dashboard</title>
+<style>
+body {{ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+       max-width:800px;margin:0 auto;padding:20px;color:#1a1a1a;background:#fafafa; }}
+h1 {{ color:#2563eb;margin-bottom:4px; }}
+h2 {{ color:#1e40af;margin-top:32px;border-bottom:2px solid #dbeafe;padding-bottom:6px; }}
+table {{ border-collapse:collapse;width:100%; }}
+th {{ text-align:left;padding:8px;background:#f1f5f9;color:#475569;font-size:13px; }}
+.subtitle {{ color:#6b7280;font-size:14px;margin-bottom:24px; }}
+</style></head>
+<body>
+<h1>&#x1F3E5; Personal Doctor Dashboard</h1>
+<div class="subtitle">{today.isoformat()} &bull; Schedule: 08:00 daily</div>
+
+{streak_html}
+
+<h2>&#x1F4CB; Action History (7 days)</h2>
+<table>
+<tr><th>Date</th><th>Done</th><th>Progress</th><th>Actions</th></tr>
+{history_rows}
+</table>
+
+<h2>&#x1F4C8; 7-Day Metric Trends</h2>
+<table>
+<tr><th>Metric</th><th>7-Day Avg</th><th>Trend</th></tr>
+{metric_rows}
+</table>
+
+<div style="margin-top:32px;padding-top:16px;border-top:1px solid #e5e7eb;
+font-size:12px;color:#9ca3af;">
+Personal Doctor &bull; <a href="/advice" style="color:#2563eb;">Latest advice</a>
+&bull; <a href="/health" style="color:#2563eb;">Health check</a></div>
+</body></html>"""
 
 
 if __name__ == "__main__":
