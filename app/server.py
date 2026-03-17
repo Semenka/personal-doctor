@@ -176,10 +176,29 @@ def start_server():
 
     # Start background scheduler
     scheduler = BackgroundScheduler(timezone=config.timezone)
-    scheduler.add_job(run_gdrive_sync, "cron", hour=7, minute=30, id="gdrive_daily")
-    scheduler.add_job(run_oura_sync, "cron", hour=7, minute=40, id="oura_daily")
-    scheduler.add_job(run_daily_advisor, "cron", hour=8, minute=0, id="advisor_daily")
+    scheduler.add_job(run_gdrive_sync, "cron", hour=7, minute=30,
+                      id="gdrive_daily", misfire_grace_time=3600)
+    scheduler.add_job(run_oura_sync, "cron", hour=7, minute=40,
+                      id="oura_daily", misfire_grace_time=3600)
+    scheduler.add_job(run_daily_advisor, "cron", hour=8, minute=0,
+                      id="advisor_daily", misfire_grace_time=3600)
     scheduler.start()
+
+    # Catch up if today's advisor was missed (e.g., Mac just woke from sleep)
+    today = datetime.now(tz=config.timezone).date()
+    advice_file = config.data_dir / "advisor" / f"daily_advice_{today}.json"
+    now_hour = datetime.now(tz=config.timezone).hour
+    if not advice_file.exists() and now_hour >= 8:
+        import threading
+        logger.info("Startup catch-up: today's advisor not yet sent, triggering now")
+        threading.Thread(target=run_gdrive_sync, daemon=True).start()
+        threading.Thread(target=run_oura_sync, daemon=True).start()
+        # Delay advisor slightly so Oura data is fetched first
+        def _delayed_advisor():
+            import time
+            time.sleep(30)
+            run_daily_advisor()
+        threading.Thread(target=_delayed_advisor, daemon=True).start()
 
     logger.info("=" * 60)
     logger.info("  Personal Doctor — Local Server")

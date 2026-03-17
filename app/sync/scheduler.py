@@ -15,11 +15,14 @@ def start_scheduler() -> None:
     scheduler = BackgroundScheduler(timezone=config.timezone)
 
     # 07:30 — Scan Google Drive for new health reports
-    scheduler.add_job(run_gdrive_sync, "cron", hour=7, minute=30, id="gdrive_daily")
+    scheduler.add_job(run_gdrive_sync, "cron", hour=7, minute=30,
+                      id="gdrive_daily", misfire_grace_time=3600)
     # 07:40 — Oura Ring data sync
-    scheduler.add_job(run_oura_sync, "cron", hour=7, minute=40, id="oura_daily")
+    scheduler.add_job(run_oura_sync, "cron", hour=7, minute=40,
+                      id="oura_daily", misfire_grace_time=3600)
     # 08:00 — AI daily advisor (Gemini 3.1 Flash Lite): analyse Oura + reports → email
-    scheduler.add_job(run_daily_advisor, "cron", hour=8, minute=0, id="advisor_daily")
+    scheduler.add_job(run_daily_advisor, "cron", hour=8, minute=0,
+                      id="advisor_daily", misfire_grace_time=3600)
 
     scheduler.start()
     print(
