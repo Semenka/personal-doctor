@@ -97,14 +97,30 @@ def main() -> int:
         print("  FAIL: GOOGLE_API_KEY not set.")
     else:
         from .daily_advisor import (
+            build_stale_oura_advice,
             email_advice,
             generate_daily_advice,
             save_advice_local,
             upload_advice_to_drive,
         )
+        from .pipeline import check_oura_freshness
+
+        # Oura freshness short-circuit — skip LLM on stale data
+        freshness = check_oura_freshness(config, day, max_stale_days=3)
+        if not freshness["fresh"] and freshness["stale_days"] >= 3:
+            advice = build_stale_oura_advice(day, freshness)
+            print(
+                f"  SHORT-CIRCUIT: Oura stale for {freshness['stale_days']}d "
+                f"(last good: {freshness['last_fresh_date']}). "
+                "Sending stale-data warning instead of LLM call."
+            )
+            save_advice_local(config, advice)
+            # Skip to Step 4 (email + WhatsApp delivery below) with stale-warning payload
+            # by falling through past the else-block via the same `advice` variable.
 
         try:
-            advice = generate_daily_advice(config, day)
+            if advice is None:
+                advice = generate_daily_advice(config, day)
             ctx = advice.get("context_summary", {})
             print(f"  OK: generated ({len(advice['advice'])} chars)")
             print(f"    Oura data: {'Yes' if ctx.get('oura_available') else 'No'}")
@@ -166,6 +182,17 @@ def main() -> int:
     except Exception as exc:
         print(f"  FAIL: {exc}")
         return 1
+
+    # WhatsApp delivery via OpenClaw gateway (F3)
+    try:
+        from .whatsapp_sender import send_whatsapp_advice
+
+        if send_whatsapp_advice(config, advice):
+            print("  OK: WhatsApp digest sent.")
+        else:
+            print("  WARN: WhatsApp send returned False (see logs).")
+    except Exception as exc:
+        print(f"  WARN: WhatsApp send errored: {exc}")
 
     print()
     print("=== Pipeline complete ===")

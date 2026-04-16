@@ -17,7 +17,10 @@ from .config import SyncConfig
 logger = logging.getLogger("personal-doctor.actions")
 
 ACTION_PATTERN = re.compile(
-    r"(\d+)\.\s+\*\*(.+?)\*\*\s*\n(.*?)(?=\n\d+\.\s+\*\*|\n###|\Z)",
+    # Title: content between the FIRST pair of ** (excluding * chars inside)
+    # so "1. **Title** [Easy] | Category: **Supplement**" yields title="Title"
+    # Body: everything after the first **...** until the next action or section.
+    r"(\d+)\.\s+\*\*([^*]+?)\*\*(.*?)(?=\n\s*\d+\.\s+\*\*|\n###|\Z)",
     re.DOTALL,
 )
 

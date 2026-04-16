@@ -12,6 +12,7 @@ Includes:
 from __future__ import annotations
 
 import json
+import re
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -265,38 +266,65 @@ def _build_prompt(context: Dict[str, Any]) -> str:
     return "\n\n".join(sections)
 
 
+_NORM_CLEAN_PATTERNS = [
+    re.compile(r"\*\*.*$"),  # trailing `**Supplement**` etc.
+    re.compile(r"\[(easy|medium|hard)\].*$", re.IGNORECASE),
+    re.compile(r"\|.*$"),  # "| Category: ..."
+    re.compile(r"\(.*?\)$"),  # trailing parentheticals like "(The 'Loose-Fit' Protocol)"
+    re.compile(r"[\s*_:;.\-\u2014]+$"),  # trailing punctuation/whitespace
+]
+
+
+def _normalize_title(title: str) -> str:
+    """Normalize an action title so old/new format variants group together.
+
+    Strips trailing category/difficulty junk that earlier advisor versions
+    leaked into titles (e.g., "Creatine Buffer** [Easy] | Category: Supplement"
+    -> "creatine buffer").
+    """
+    if not title:
+        return ""
+    t = title.strip()
+    for pat in _NORM_CLEAN_PATTERNS:
+        t = pat.sub("", t).strip()
+    # Collapse whitespace, lowercase for matching
+    t = re.sub(r"\s+", " ", t).strip().lower()
+    return t
+
+
 def _compute_deny_list(
     action_history: List[Dict[str, Any]], min_consecutive_skips: int = 3
 ) -> List[tuple]:
     """Return action titles skipped on 3+ consecutive days, newest-to-oldest.
 
     Input: action_history is a list of {"date": ..., "actions": [{title, done, ...}]}
-    ordered newest first. We walk through each title and count how many of the
-    most recent consecutive days it was NOT done (and was present).
+    ordered newest first. We walk through each (normalized) title and count
+    how many of the most recent consecutive days it was NOT done.
+    Returns a list of (display_title, skip_count) tuples.
     """
     if not action_history:
         return []
 
-    # Collect, for each title, the sequence of done/skipped values newest-first
-    title_states: Dict[str, List[bool]] = {}
+    # Collect per-normalized-title: list of (done_flag, display_title), newest first
+    title_states: Dict[str, List[tuple]] = {}
     for day_record in action_history:
         for a in day_record.get("actions", []):
-            title = a.get("title", "").strip()
-            if not title:
+            raw = a.get("title", "").strip()
+            norm = _normalize_title(raw)
+            if not norm:
                 continue
-            title_states.setdefault(title, []).append(bool(a.get("done")))
+            title_states.setdefault(norm, []).append((bool(a.get("done")), raw))
 
     deny = []
-    for title, states in title_states.items():
-        # Count consecutive False values from the newest end
+    for norm, states in title_states.items():
         skips = 0
-        for s in states:
-            if s:
+        display = states[0][1] if states else norm
+        for done_flag, _raw in states:
+            if done_flag:
                 break
             skips += 1
         if skips >= min_consecutive_skips:
-            deny.append((title, skips))
-    # Sort by longest skip streak first
+            deny.append((display, skips))
     deny.sort(key=lambda x: x[1], reverse=True)
     return deny
 
