@@ -83,3 +83,54 @@ def oura_to_daily_payload(day: date, summary: Dict[str, Any]) -> Dict[str, Any]:
 def load_oura_daily(config: SyncConfig, day: date) -> Dict[str, Any]:
     summary = fetch_daily_summary(config, day)
     return oura_to_daily_payload(day, summary)
+
+
+def oura_data_is_fresh(payload: Dict[str, Any]) -> bool:
+    """Return True if the Oura payload contains real (non-zero) sleep/recovery data.
+
+    Historically, HRV/sleep/readiness dropping to 0 for days in a row means the
+    ring hasn't synced (dead battery, not charging, Oura app not opened, etc.).
+    Advisor output based on zero metrics is misleading — we should warn instead.
+    """
+    # Primary signals that should always have a value if the ring synced
+    sleep_hours = payload.get("sleep_hours", 0) or 0
+    hrv = payload.get("hrv", 0) or 0
+    readiness = payload.get("readiness_score", 0) or 0
+    resting_hr = payload.get("resting_hr", 0) or 0
+    sleep_quality = payload.get("sleep_quality", 0) or 0
+
+    # If at least 2 of these 5 signals are non-zero, the ring synced something.
+    signals = [sleep_hours > 0, hrv > 0, readiness > 0, resting_hr > 0, sleep_quality > 0]
+    return sum(signals) >= 2
+
+
+def check_oura_freshness(
+    config: SyncConfig, day: date, max_stale_days: int = 3
+) -> Dict[str, Any]:
+    """Check if Oura data has been fresh in the last N days.
+
+    Returns {"fresh": bool, "stale_days": int, "last_fresh_date": str|None}.
+    """
+    from datetime import timedelta
+
+    from .storage import load_daily_payload
+
+    stale_days = 0
+    last_fresh: str | None = None
+    for i in range(max_stale_days + 1):
+        d = (day - timedelta(days=i)).isoformat()
+        try:
+            payload = load_daily_payload(config, d)
+        except FileNotFoundError:
+            stale_days += 1
+            continue
+        if oura_data_is_fresh(payload):
+            last_fresh = d
+            break
+        stale_days += 1
+
+    return {
+        "fresh": last_fresh is not None and stale_days == 0,
+        "stale_days": stale_days,
+        "last_fresh_date": last_fresh,
+    }

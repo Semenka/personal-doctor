@@ -29,7 +29,11 @@ def _gather_context(
     config: SyncConfig, day: date
 ) -> Dict[str, Any]:
     """Collect all available health data for the prompt."""
-    context: Dict[str, Any] = {"date": day.isoformat()}
+    # Weekend mode: Fri (4) and Sat (5) have historically had 0% completion
+    context: Dict[str, Any] = {
+        "date": day.isoformat(),
+        "weekend_mode": day.weekday() in (4, 5),
+    }
 
     # Oura daily data
     try:
@@ -237,7 +241,64 @@ def _build_prompt(context: Dict[str, Any]) -> str:
             )
         sections.append(effects_section)
 
+    # ── Deny-list: actions skipped 3+ consecutive days (mechanical rotation) ──
+    deny_list = _compute_deny_list(context.get("action_history", []))
+    if deny_list:
+        deny_section = (
+            "## DO NOT RECOMMEND TODAY (failed 3+ consecutive days)\n"
+            "These titles have been ignored for 3+ straight days. Recommending them "
+            "again wastes a slot. You MUST pick something different targeting the "
+            "same underlying goal.\n"
+        )
+        for title, skips in deny_list:
+            deny_section += f"- **{title}** (skipped {skips} days in a row)\n"
+        sections.append(deny_section)
+
+    # ── Weekend mode hint ──
+    if context.get("weekend_mode"):
+        sections.append(
+            "## Mode: WEEKEND (lighter plan)\n"
+            "Friday/Saturday have historically had 0% completion. Respond with "
+            "ONE priority action only and skip the 3 micro-actions."
+        )
+
     return "\n\n".join(sections)
+
+
+def _compute_deny_list(
+    action_history: List[Dict[str, Any]], min_consecutive_skips: int = 3
+) -> List[tuple]:
+    """Return action titles skipped on 3+ consecutive days, newest-to-oldest.
+
+    Input: action_history is a list of {"date": ..., "actions": [{title, done, ...}]}
+    ordered newest first. We walk through each title and count how many of the
+    most recent consecutive days it was NOT done (and was present).
+    """
+    if not action_history:
+        return []
+
+    # Collect, for each title, the sequence of done/skipped values newest-first
+    title_states: Dict[str, List[bool]] = {}
+    for day_record in action_history:
+        for a in day_record.get("actions", []):
+            title = a.get("title", "").strip()
+            if not title:
+                continue
+            title_states.setdefault(title, []).append(bool(a.get("done")))
+
+    deny = []
+    for title, states in title_states.items():
+        # Count consecutive False values from the newest end
+        skips = 0
+        for s in states:
+            if s:
+                break
+            skips += 1
+        if skips >= min_consecutive_skips:
+            deny.append((title, skips))
+    # Sort by longest skip streak first
+    deny.sort(key=lambda x: x[1], reverse=True)
+    return deny
 
 
 SYSTEM_PROMPT = """\
@@ -301,90 +362,93 @@ sleep deprivation (Rae et al. 2003)
 14. Magnesium glycinate 400 mg before bed: improves sleep quality scores by ~17% \
 (Abbasi et al. 2012)
 
-### Day-to-day variation rules
-You have a library of 15-20 evidence-based protocols derived from the findings above. Each day:
-1. Select 5 protocols. At least 2 must be DIFFERENT from yesterday's 5 (check action history).
-2. If an action was done 3+ consecutive days, rotate it out \u2014 introduce a different protocol \
-targeting the same goal.
-3. Include exactly 1 "new/experimental" protocol each day that the patient has NOT seen \
-in the past 7 days of action history.
-4. Balance the 5 protocols across categories: at least 1 supplement, 1 movement/exercise, \
-1 sleep/recovery, 1 stress/lifestyle, and 1 nutrition protocol.
-5. Never repeat the exact same set of 5 protocols two days in a row.
+### Volume & variation rules (CRITICAL — past attempts with 5 actions led to 0% completion)
+The patient's data shows they complete **2 actions max on a good day**. Stop overloading them.
 
-### Feedback loop instructions
-You also receive the patient's action completion history from the past 7 days \
-AND computed action-to-metric correlations (what actually moved the numbers). \
-Use this data to:
-1. **Reference yesterday's results**: mention which actions were done and which were skipped. \
-If an action was skipped, briefly suggest a lower-effort alternative.
-2. **Use computed effects**: you receive correlations showing next-day metric changes \
-when specific actions were done vs. skipped. Cite these numbers explicitly \
-(e.g., "Box breathing correlated with +7 ms HRV the next day in your data"). \
-Prioritize actions with proven positive effects.
-3. **Adjust specificity**: make every recommendation with exact times (e.g., "at 10:30 AM"), \
-exact dosages (e.g., "400 mg magnesium glycinate"), and exact durations (e.g., "25 minutes").
-4. **Streak motivation**: if the patient has a streak going, mention it encouragingly. \
-If the streak broke, acknowledge it without judgment and suggest getting back on track.
-5. **Avoid repeating failed actions**: if an action was NOT DONE for 3+ consecutive days, \
-replace it with a different action that achieves the same goal.
+Each weekday, output exactly:
+- **1 PRIORITY action** — the most important thing they should do today
+- **1 BACKUP action** — a different category, same day
+- **3 MICRO-WINS** — 2-minute actions they can stack into their existing routine
+
+On Friday/Saturday (WEEKEND mode, signaled in the input), output only the 1 priority action \
+and skip micro-wins. Weekend completion has historically been 0%; keep it minimal.
+
+Variation requirements:
+1. The PRIORITY action must be DIFFERENT from yesterday's priority (check action history).
+2. Respect the "DO NOT RECOMMEND TODAY" list in the input — those titles have been skipped \
+3+ consecutive days and are dead to us.
+3. Balance categories across days: supplement, movement, sleep/recovery, stress, nutrition.
+4. Rotate: never recommend the exact same priority two days in a row, and never the same \
+pair of priority+backup.
+
+### Feedback loop instructions (mandatory)
+You receive:
+- The patient's 7-day action completion history
+- Computed action-to-metric correlations (what actually moved the numbers)
+
+Requirements:
+1. **Cite computed effects.** If the input contains "Computed Action Effects", the Why field \
+of at least one action MUST reference a specific number from that list, using this exact phrasing: \
+"On the N days you did X, your [metric] [direction] by [delta]." If no effects are computed yet, \
+skip this requirement.
+2. **Specificity**: every action has exact time (e.g., "7:05–7:20 AM"), exact dosage/count \
+(e.g., "400 mg"), and exact duration (e.g., "12 minutes").
+3. **Progress line**: if any action was completed in the last 7 days, open with one neutral line \
+naming the most recent completion ("Last completed: [title] on [date]"). If nothing was completed, \
+skip this line entirely — do not mention zero completions, do not shame, do not use the word \
+"streak" unless the streak is currently > 0.
 
 ### 7-Day trend context
-You also receive 7-day rolling averages and trend directions for key metrics. Use these to:
-1. Identify improving or declining patterns and call them out.
-2. Correlate changes with the actions the patient did or didn't do.
-3. Set today's recommendations in the context of the weekly trajectory.
+You also receive 7-day rolling averages and trend directions. Use these to:
+1. Call out one clear improving or declining pattern (max 1 sentence).
+2. Tie today's priority action to that pattern when possible.
 
-Based on today's data, produce a **clear, actionable daily plan** structured exactly as:
+### Output format (STRICT)
 
-## Daily Health Plan \u2014 {date}
+## Daily Health Plan — {date}
 
-### Progress report
-Brief note on yesterday's action completion and any observable metric changes \
-linked to those actions. Note the current streak. Skip this section if no history available.
+### Progress
+(1 line max. Last completed action + date. Skip entirely if none in the past 7 days.)
 
-### Top 5 action protocols today
+### Priority (do this one thing)
 
-1. **[Protocol title]** [Easy/Medium/Hard] | Category: [Supplement/Movement/Sleep/Stress/Nutrition]
-   **When:** Exact time window (e.g., "7:00\u20137:15 AM, within 30 min of waking")
+1. **[Title]** [Easy/Medium/Hard] | Category: [Supplement/Movement/Sleep/Stress/Nutrition]
+   **When:** Exact time window
    **Steps:**
-   a) First specific step with exact dosage/duration
-   b) Second specific step
-   c) Third step if needed
-   **Why:** 1\u20132 sentences with evidence citation (e.g., "Ubiquinol improves sperm motility \
-~26% over 12 weeks \u2014 Safarinejad 2012"). If computed action effects show this correlates \
-with metric improvements, cite the numbers.
-   **Expected effect:** What the patient should notice and when (e.g., "HRV +5\u201310 ms within 3 days")
-   *Quick alternative (2 min):* Minimal version if short on time.
+   a) Specific step with exact dosage/duration
+   b) Second step
+   **Why:** 1–2 sentences. Include a citation (author year) AND, if computed effects exist, \
+cite the number from the input exactly.
+   **Expected effect:** What to notice and when.
+   *Quick alt (2 min):* Minimal version.
 
-2. **[Protocol title]** [Easy/Medium/Hard] | Category: ...
-   (same structure)
+### Backup (if priority won't happen)
 
-3\u20135. (same structure)
+2. **[Title]** [Easy/Medium/Hard] | Category: [different from priority]
+   (same structure as above)
 
-### Key metrics to watch
-Briefly note which of today's numbers are good and which need attention, \
-with reference ranges for a man optimizing fertility. Include 7-day trend context.
+### 3 Micro-wins (each < 2 min — stack into existing habits)
+(SKIP this whole section on Friday/Saturday if weekend_mode is active.)
 
-### Nutrition focus
-One specific meal or supplement recommendation for today, tied to the data. \
-If genetic variants affect nutrient metabolism, adjust accordingly.
+- **[Micro-win 1]** — one-sentence how, tied to existing trigger (e.g., "After first coffee: …")
+- **[Micro-win 2]** — one-sentence how
+- **[Micro-win 3]** — one-sentence how
+
+### One metric to watch today
+Single line: the one number to check on the Oura ring tonight, with the target range.
 
 ### What to avoid today
-One concrete thing to avoid today based on the data (e.g., if sleep was poor: \
-avoid intense training; if HRV is low: avoid alcohol; if MTHFR+: avoid folic acid).
-
-### Genetic considerations
-If genetic data is available, add a brief note on how today's plan accounts for \
-the patient's genetic profile. Skip this section if no genetic data is on file.
+One concrete thing, tied to today's data.
 
 ### Fertility checkpoint
-Brief note on fertility-specific progress: days since last sperm test (if known), \
-current supplement protocol status, any cycle-related timing considerations. \
-If a sperm test is coming up, suggest preparation actions 3-5 days before.
+One sentence only. Days since last sperm test (if known), or next test reminder.
 
-Be direct, evidence-based, practical. No disclaimers \u2014 speak as the patient's trusted doctor. \
-Keep the total response under 1200 words."""
+HARD LIMITS:
+- Total response under 600 words.
+- Never mention "0/N completed" or "you skipped".
+- Never use the word "streak" unless the current streak is > 0.
+- Never recommend anything from the DO NOT RECOMMEND TODAY list.
+- The patient is a tired human with 2 actions/day of capacity. Write for that human."""
 
 
 def generate_daily_advice(
@@ -413,7 +477,7 @@ def generate_daily_advice(
         contents=user_message,
         config=types.GenerateContentConfig(
             system_instruction=system,
-            max_output_tokens=3500,
+            max_output_tokens=1800,
         ),
     )
 
@@ -499,6 +563,48 @@ def email_advice(config: SyncConfig, advice: Dict[str, Any]) -> None:
     from .email_sender import send_advice_email
 
     send_advice_email(config, advice)
+
+
+def build_stale_oura_advice(day: date, freshness: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a short advice payload warning the user that Oura data is stale.
+
+    Avoids wasting an LLM call and sends a clear "data is broken, fix it" signal
+    instead of personalized advice based on zeros.
+    """
+    stale_days = freshness.get("stale_days", 0)
+    last_fresh = freshness.get("last_fresh_date") or "never"
+    body = (
+        f"## Daily Health Plan — {day.isoformat()}\n\n"
+        f"### ⚠️ Oura data is stale\n\n"
+        f"No fresh sleep / HRV / readiness data for **{stale_days} day(s)**. "
+        f"Last good sync: {last_fresh}.\n\n"
+        "Personalized advice needs real data. Without it, any recommendation would "
+        "be pure guesswork, so today's plan is intentionally minimal.\n\n"
+        "### Do this instead\n"
+        "1. Open the Oura app on your phone — trigger a manual sync.\n"
+        "2. Charge the ring if the battery is low (< 20%).\n"
+        "3. If sync still fails, reconnect the ring under Settings → My Device.\n\n"
+        "### If you have 2 minutes today\n"
+        "- 10 min of morning daylight within 30 min of waking (Figueiro 2017).\n"
+        "- 30-second cold rinse at the end of your shower (Shevchuk 2008).\n\n"
+        "Tomorrow's plan will be fully personalized once data is flowing."
+    )
+    return {
+        "report_type": "daily_advisor",
+        "date": day.isoformat(),
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "model": "stale-data-short-circuit",
+        "advice": body,
+        "context_summary": {
+            "oura_available": False,
+            "oura_stale_days": stale_days,
+            "last_fresh_date": last_fresh,
+            "lab_reports_count": 0,
+            "lab_report_types": [],
+            "image_analyses_count": 0,
+            "image_severities": [],
+        },
+    }
 
 
 def print_advice(advice: Dict[str, Any]) -> None:

@@ -23,13 +23,17 @@ def start_scheduler() -> None:
     # 08:00 — AI daily advisor (Gemini 3.1 Flash Lite): analyse Oura + reports → email
     scheduler.add_job(run_daily_advisor, "cron", hour=8, minute=0,
                       id="advisor_daily", misfire_grace_time=3600)
+    # 21:00 — Evening WhatsApp nudge if actions still open (F4)
+    scheduler.add_job(run_whatsapp_evening_nudge, "cron", hour=21, minute=0,
+                      id="evening_nudge", misfire_grace_time=3600)
 
     scheduler.start()
     print(
         "Scheduler started:\n"
         "  07:30  Google Drive health folder scan\n"
         "  07:40  Oura Ring data sync\n"
-        "  08:00  AI daily advisor → email"
+        "  08:00  AI daily advisor → email + WhatsApp\n"
+        "  21:00  WhatsApp evening nudge (if actions still open)"
     )
 
     try:
@@ -132,12 +136,35 @@ def run_daily_advisor() -> None:
 
     day = datetime.now(tz=config.timezone).date()
     from .daily_advisor import (
+        build_stale_oura_advice,
         email_advice,
         generate_daily_advice,
         print_advice,
         save_advice_local,
         upload_advice_to_drive,
     )
+    from .pipeline import check_oura_freshness
+
+    # Oura freshness short-circuit: if the last 3 days have no real sleep/HRV
+    # data, skip the LLM call and send a "fix your ring" warning instead.
+    freshness = check_oura_freshness(config, day, max_stale_days=3)
+    if not freshness["fresh"] and freshness["stale_days"] >= 3:
+        advice = build_stale_oura_advice(day, freshness)
+        print(f"Oura stale for {freshness['stale_days']} days — sending warning email.")
+        save_advice_local(config, advice)
+        try:
+            if config.email_to and config.smtp_host:
+                email_advice(config, advice)
+                print(f"Emailed Oura-stale warning to {config.email_to}")
+        except Exception as exc:
+            print(f"Stale-warning email failed: {exc}")
+        try:
+            from .whatsapp_sender import send_whatsapp_advice
+
+            send_whatsapp_advice(config, advice)
+        except Exception as exc:
+            print(f"WhatsApp stale-warning send failed: {exc}")
+        return
 
     try:
         advice = generate_daily_advice(config, day)
@@ -193,3 +220,32 @@ def run_daily_advisor() -> None:
             print(f"Emailed daily advice to {config.email_to}")
         except Exception as exc:
             print(f"Email send failed: {exc}")
+
+    # WhatsApp delivery via OpenClaw gateway (F3)
+    try:
+        from .whatsapp_sender import send_whatsapp_advice
+
+        send_whatsapp_advice(config, advice)
+    except Exception as exc:
+        print(f"WhatsApp send failed (non-fatal): {exc}")
+
+
+def run_whatsapp_evening_nudge() -> None:
+    """21:00 WhatsApp nudge: if any of today's actions are still open, ping the user."""
+    from datetime import datetime
+
+    config = load_config()
+    day = datetime.now(tz=config.timezone).date()
+    try:
+        from .action_tracker import load_actions_with_sheets
+        from .whatsapp_sender import send_whatsapp_evening_nudge
+
+        actions = load_actions_with_sheets(config, day.isoformat())
+        if not actions:
+            return  # nothing generated today (e.g., stale Oura)
+        done_count = sum(1 for a in actions if a.get("done"))
+        if done_count >= len(actions):
+            return  # everything already done, skip nudge
+        send_whatsapp_evening_nudge(config, day.isoformat(), actions)
+    except Exception as exc:
+        print(f"Evening nudge failed (non-fatal): {exc}")

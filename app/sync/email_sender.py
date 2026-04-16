@@ -11,6 +11,52 @@ from typing import Any, Dict, List
 from .config import SyncConfig
 
 
+def _build_best_mover_html(config: SyncConfig, day: str) -> str:
+    """Surface the single highest-impact action at the top of the email (F9).
+
+    Pulls the top entry from `compute_action_effects` and highlights it. If the
+    user has never completed anything yet, returns an empty string so the email
+    stays clean.
+    """
+    try:
+        from datetime import date as date_type
+
+        from .action_effects import compute_action_effects
+
+        effects = compute_action_effects(
+            config.data_dir, date_type.fromisoformat(day), lookback_days=14
+        )
+    except Exception:
+        return ""
+
+    if not effects:
+        return ""
+
+    # Pick the best beneficial effect (positive impact with largest absolute delta)
+    positive = [e for e in effects if e.get("impact", 0) > 0]
+    if not positive:
+        return ""
+    best = positive[0]
+
+    arrow = "&#x2B06;"
+    return (
+        '<div style="margin:0 0 20px 0;padding:14px 18px;background:#fef3c7;'
+        'border-left:4px solid #f59e0b;border-radius:6px;">'
+        '<div style="font-size:12px;font-weight:700;color:#92400e;'
+        'text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">'
+        'Your highest-impact action</div>'
+        f'<div style="font-size:15px;color:#1f2937;">'
+        f'{arrow} <strong>{best["action"]}</strong>: '
+        f'{best["metric"]} {best["delta"]} '
+        f'<span style="color:#6b7280;font-size:13px;">'
+        f'({best["days_done"]}d done vs {best["days_skipped"]}d skipped)'
+        f'</span></div>'
+        '<div style="font-size:12px;color:#92400e;margin-top:4px;">'
+        'Consider repeating this today.</div>'
+        '</div>'
+    )
+
+
 def _build_execution_dashboard_html(config: SyncConfig, day: str) -> str:
     """Build a 7-day action execution dashboard for the email.
 
@@ -27,7 +73,16 @@ def _build_execution_dashboard_html(config: SyncConfig, day: str) -> str:
     any_streak = streaks.get("any_action", 0)
     all_streak = streaks.get("all_actions", 0)
 
-    # Streak badges
+    # Check if there is anything positive to show. If nothing completed in 7 days,
+    # hide the execution dashboard entirely (F8 — no guilt narrative).
+    any_recent_completions = any(
+        any(a.get("done") for a in rec.get("actions", []))
+        for rec in history
+    )
+    if not any_recent_completions and any_streak == 0:
+        return ""
+
+    # Streak badges (only when positive — never shame about zero)
     streak_html = (
         '<div style="margin-bottom:12px;font-size:14px;">'
     )
@@ -268,6 +323,9 @@ def send_advice_email(config: SyncConfig, advice: Dict[str, Any]) -> None:
     # Convert markdown-ish advice to simple HTML
     html_body = _markdown_to_html(advice_text)
 
+    # Highlight the single highest-impact action (F9)
+    best_mover_html = _build_best_mover_html(config, day)
+
     # Build execution dashboard (7-day history + effects)
     execution_dashboard_html = _build_execution_dashboard_html(config, day)
 
@@ -298,6 +356,7 @@ def send_advice_email(config: SyncConfig, advice: Dict[str, Any]) -> None:
   <div class="meta">
     Oura data: {oura_badge} &bull; Lab reports: {lab_types}{scan_info} &bull; Model: {advice.get('model', 'N/A')}
   </div>
+  {best_mover_html}
   {html_body}
   {execution_dashboard_html}
   {action_buttons_html}

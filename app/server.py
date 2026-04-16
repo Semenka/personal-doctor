@@ -170,6 +170,7 @@ def start_server():
         run_daily_advisor,
         run_gdrive_sync,
         run_oura_sync,
+        run_whatsapp_evening_nudge,
     )
 
     config = load_config()
@@ -182,6 +183,8 @@ def start_server():
                       id="oura_daily", misfire_grace_time=3600)
     scheduler.add_job(run_daily_advisor, "cron", hour=8, minute=0,
                       id="advisor_daily", misfire_grace_time=3600)
+    scheduler.add_job(run_whatsapp_evening_nudge, "cron", hour=21, minute=0,
+                      id="evening_nudge", misfire_grace_time=3600)
     scheduler.start()
 
     # Catch up if today's advisor was missed (e.g., Mac just woke from sleep)
@@ -210,7 +213,8 @@ def start_server():
     logger.info("  Schedule:")
     logger.info("    07:30  Google Drive health folder scan")
     logger.info("    07:40  Oura Ring data sync")
-    logger.info("    08:00  AI daily advisor → email")
+    logger.info("    08:00  AI daily advisor → email + WhatsApp")
+    logger.info("    21:00  WhatsApp evening nudge (if actions still open)")
     logger.info("")
     logger.info("  Endpoints:")
     logger.info("    http://localhost:8000         Web dashboard")
