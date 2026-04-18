@@ -128,6 +128,23 @@ def create_app() -> FastAPI:
         actions = load_actions_with_sheets(config, date)
         return HTMLResponse(_render_action_page(date, idx, actions, done=False, success=True))
 
+    # ── WhatsApp inbound webhook (I1, I2, I3) ──
+    @dashboard_app.post("/whatsapp/inbound")
+    async def whatsapp_inbound(payload: dict):
+        """Receive a user WhatsApp reply and return the response string.
+
+        Called by the OpenClaw personal-doctor agent (which binds the WhatsApp
+        channel via `openclaw agents bind --agent personal-doctor --bind whatsapp`).
+        Expected JSON shape: {"from": "+393491913903", "body": "1"}.
+        Reply shape: {"reply": "✅ Marked #1 done: ..."}.
+        """
+        from app.sync.whatsapp_inbound import handle_inbound_message
+
+        body = (payload or {}).get("body", "") or ""
+        from_number = (payload or {}).get("from", "") or None
+        reply = handle_inbound_message(config, body, from_number=from_number)
+        return JSONResponse({"reply": reply})
+
     @dashboard_app.get("/actions")
     async def view_actions(date: Optional[str] = None):
         from app.sync.action_tracker import load_actions_with_sheets
@@ -167,9 +184,13 @@ def start_server():
 
     from app.sync.config import load_config
     from app.sync.scheduler import (
+        run_anomaly_detector_job,
         run_daily_advisor,
         run_gdrive_sync,
         run_oura_sync,
+        run_research_sync,
+        run_supplement_check_job,
+        run_weekly_retro_job,
         run_whatsapp_evening_nudge,
     )
 
@@ -177,14 +198,22 @@ def start_server():
 
     # Start background scheduler
     scheduler = BackgroundScheduler(timezone=config.timezone)
+    scheduler.add_job(run_research_sync, "cron", hour=7, minute=20,
+                      id="research_daily", misfire_grace_time=3600)
     scheduler.add_job(run_gdrive_sync, "cron", hour=7, minute=30,
                       id="gdrive_daily", misfire_grace_time=3600)
     scheduler.add_job(run_oura_sync, "cron", hour=7, minute=40,
                       id="oura_daily", misfire_grace_time=3600)
     scheduler.add_job(run_daily_advisor, "cron", hour=8, minute=0,
                       id="advisor_daily", misfire_grace_time=3600)
+    scheduler.add_job(run_anomaly_detector_job, "cron", hour=7, minute=41,
+                      id="anomaly_daily", misfire_grace_time=3600)
+    scheduler.add_job(run_supplement_check_job, "cron", hour=7, minute=45,
+                      id="supplement_daily", misfire_grace_time=3600)
     scheduler.add_job(run_whatsapp_evening_nudge, "cron", hour=21, minute=0,
                       id="evening_nudge", misfire_grace_time=3600)
+    scheduler.add_job(run_weekly_retro_job, "cron", day_of_week="sun", hour=18, minute=0,
+                      id="weekly_retro", misfire_grace_time=7200)
     scheduler.start()
 
     # Catch up if today's advisor was missed (e.g., Mac just woke from sleep)
@@ -211,10 +240,14 @@ def start_server():
     logger.info(f"  Logs: {LOG_FILE}")
     logger.info("")
     logger.info("  Schedule:")
+    logger.info("    07:20  Research sync (PubMed + OpenAlex)")
     logger.info("    07:30  Google Drive health folder scan")
     logger.info("    07:40  Oura Ring data sync")
+    logger.info("    07:41  Anomaly detector")
+    logger.info("    07:45  Supplement inventory check")
     logger.info("    08:00  AI daily advisor → email + WhatsApp")
     logger.info("    21:00  WhatsApp evening nudge (if actions still open)")
+    logger.info("    Sun 18:00  Weekly retrospective email")
     logger.info("")
     logger.info("  Endpoints:")
     logger.info("    http://localhost:8000         Web dashboard")
@@ -401,6 +434,15 @@ th {{ text-align:left;padding:8px;background:#f1f5f9;color:#475569;font-size:13p
 <body>
 <h1>&#x1F3E5; Personal Doctor Dashboard</h1>
 <div class="subtitle">{today.isoformat()} &bull; Schedule: 08:00 daily</div>
+
+<form method="post" action="/run" style="margin-bottom:20px;"
+      onsubmit="fetch('/run',{{method:'POST'}}).then(r=>r.json()).then(d=>{{document.getElementById('run-status').innerText=d.message||d.status;}});return false;">
+  <button type="submit" style="background:#2563eb;color:#fff;border:none;
+    padding:10px 20px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">
+    &#x25B6; Trigger full pipeline now
+  </button>
+  <span id="run-status" style="margin-left:12px;color:#6b7280;font-size:13px;"></span>
+</form>
 
 {streak_html}
 

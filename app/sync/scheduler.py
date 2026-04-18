@@ -14,6 +14,9 @@ def start_scheduler() -> None:
     config = load_config()
     scheduler = BackgroundScheduler(timezone=config.timezone)
 
+    # 07:20 — Fetch fresh research papers (PubMed + OpenAlex)
+    scheduler.add_job(run_research_sync, "cron", hour=7, minute=20,
+                      id="research_daily", misfire_grace_time=3600)
     # 07:30 — Scan Google Drive for new health reports
     scheduler.add_job(run_gdrive_sync, "cron", hour=7, minute=30,
                       id="gdrive_daily", misfire_grace_time=3600)
@@ -23,18 +26,58 @@ def start_scheduler() -> None:
     # 08:00 — AI daily advisor (Gemini 3.1 Flash Lite): analyse Oura + reports → email
     scheduler.add_job(run_daily_advisor, "cron", hour=8, minute=0,
                       id="advisor_daily", misfire_grace_time=3600)
+    # 07:41 — Anomaly detector runs right after Oura sync (X1)
+    scheduler.add_job(run_anomaly_detector_job, "cron", hour=7, minute=41,
+                      id="anomaly_daily", misfire_grace_time=3600)
+    # 07:45 — Supplement inventory decrement + low-stock alert (X2)
+    scheduler.add_job(run_supplement_check_job, "cron", hour=7, minute=45,
+                      id="supplement_daily", misfire_grace_time=3600)
     # 21:00 — Evening WhatsApp nudge if actions still open (F4)
     scheduler.add_job(run_whatsapp_evening_nudge, "cron", hour=21, minute=0,
                       id="evening_nudge", misfire_grace_time=3600)
+    # Sunday 18:00 — Weekly retrospective (I4)
+    scheduler.add_job(run_weekly_retro_job, "cron", day_of_week="sun", hour=18, minute=0,
+                      id="weekly_retro", misfire_grace_time=7200)
 
     scheduler.start()
     print(
         "Scheduler started:\n"
+        "  07:20  Research sync (PubMed + OpenAlex)\n"
         "  07:30  Google Drive health folder scan\n"
         "  07:40  Oura Ring data sync\n"
+        "  07:41  Anomaly detector\n"
+        "  07:45  Supplement inventory check\n"
         "  08:00  AI daily advisor → email + WhatsApp\n"
-        "  21:00  WhatsApp evening nudge (if actions still open)"
+        "  21:00  WhatsApp evening nudge (if actions still open)\n"
+        "  Sun 18:00  Weekly retrospective"
     )
+
+
+def run_anomaly_detector_job() -> None:
+    try:
+        from .anomaly_detector import run_anomaly_detector
+
+        run_anomaly_detector()
+    except Exception as exc:
+        print(f"Anomaly detector failed: {exc}")
+
+
+def run_supplement_check_job() -> None:
+    try:
+        from .supplement_inventory import run_supplement_check
+
+        run_supplement_check()
+    except Exception as exc:
+        print(f"Supplement check failed: {exc}")
+
+
+def run_weekly_retro_job() -> None:
+    try:
+        from .weekly_retro import run_weekly_retro
+
+        run_weekly_retro()
+    except Exception as exc:
+        print(f"Weekly retro failed: {exc}")
 
     try:
         while True:
@@ -99,13 +142,15 @@ def run_research_sync() -> None:
 
     config = load_config()
     day = datetime.now(tz=config.timezone).date()
-    if not config.database_url:
-        raise RuntimeError("DATABASE_URL is required for research sync")
-    init_db(config)
+    if config.database_url:
+        init_db(config)
     from ..research.pipeline import run_daily_research
 
-    run_daily_research(config, day)
-    print("Saved daily research recommendations to Postgres.")
+    try:
+        recs = run_daily_research(config, day)
+        print(f"Research sync: generated {len(recs)} recommendation(s).")
+    except Exception as exc:
+        print(f"Research sync failed (non-fatal): {exc}")
 
 
 def run_gdrive_sync() -> None:

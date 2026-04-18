@@ -97,6 +97,30 @@ def _gather_context(
         context["metric_trends"] = {}
         context["oura_history"] = []
 
+    # Fresh research papers (PubMed + OpenAlex) — R2
+    try:
+        from ..research.pipeline import load_research_for_day
+
+        context["research"] = load_research_for_day(config, day)
+    except Exception:
+        context["research"] = []
+
+    # Newly ingested reports (M1) — for today's banner
+    try:
+        from .report_summarizer import load_new_reports_for_day
+
+        context["new_reports"] = load_new_reports_for_day(config, day)
+    except Exception:
+        context["new_reports"] = []
+
+    # Cross-report marker trends (M4)
+    try:
+        from .report_trends import compute_marker_trends
+
+        context["marker_trends"] = compute_marker_trends(config)
+    except Exception:
+        context["marker_trends"] = {}
+
     return context
 
 
@@ -254,6 +278,67 @@ def _build_prompt(context: Dict[str, Any]) -> str:
         for title, skips in deny_list:
             deny_section += f"- **{title}** (skipped {skips} days in a row)\n"
         sections.append(deny_section)
+
+    # ── Fresh research papers (R2) ──
+    research = context.get("research", [])
+    if research:
+        lines = ["## Fresh research (last 24 months — cite when relevant)"]
+        for r in research[:6]:
+            bits = []
+            if r.get("goal"):
+                bits.append(f"**{r['goal']}**")
+            bits.append(r.get("paper_title", "Untitled"))
+            meta_bits = []
+            if r.get("journal"):
+                meta_bits.append(r["journal"])
+            if r.get("cited_by_count"):
+                meta_bits.append(f"cited {r['cited_by_count']}")
+            if meta_bits:
+                bits.append(f"({', '.join(meta_bits)})")
+            line = " — ".join(bits)
+            if r.get("url"):
+                line += f"  {r['url']}"
+            lines.append(f"- {line}")
+        lines.append(
+            "\nAt least one action today MUST cite one of these papers by "
+            "author+year or title phrase (not the 14 static findings in your system prompt)."
+        )
+        sections.append("\n".join(lines))
+
+    # ── New reports detected today (M1) ──
+    new_reports = context.get("new_reports", [])
+    if new_reports:
+        lines = ["## 🆕 New medical reports detected today"]
+        for rep in new_reports[:5]:
+            kind = rep.get("kind", "report")
+            summary = rep.get("summary", "").strip()
+            flags = rep.get("flags", [])
+            severity = rep.get("severity") or ""
+            header = f"- **{kind}**"
+            if severity:
+                header += f" [severity: {severity}]"
+            lines.append(header)
+            if summary:
+                lines.append(f"  {summary}")
+            if flags:
+                lines.append("  Flagged values: " + "; ".join(flags[:4]))
+        lines.append(
+            "\nOpen today's plan with a brief acknowledgement of the new report(s) "
+            "and adapt the priority action to address the most important finding."
+        )
+        sections.append("\n".join(lines))
+
+    # ── Cross-report marker trends (M4) ──
+    marker_trends = context.get("marker_trends", {})
+    if marker_trends:
+        lines = ["## Lab marker trends (across multiple reports)"]
+        for marker, info in list(marker_trends.items())[:8]:
+            arrow = {"up": "↑", "down": "↓", "stable": "→"}.get(info.get("direction", "stable"), "→")
+            lines.append(
+                f"- {marker}: {info.get('latest')} {arrow} "
+                f"(previous {info.get('previous')}, Δ {info.get('delta')})"
+            )
+        sections.append("\n".join(lines))
 
     # ── Weekend mode hint ──
     if context.get("weekend_mode"):

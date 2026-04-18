@@ -103,6 +103,27 @@ def sync_drive_reports(
                     if config.gdrive_credentials_dir:
                         upload_analysis_to_drive(config, analysis)
 
+                    # Record as "new report" for today's advisor + urgent push
+                    from .report_summarizer import save_new_report
+
+                    save_new_report(
+                        config,
+                        day,
+                        "medical_image",
+                        name,
+                        file_id,
+                        {
+                            "summary": analysis.get("analysis", "")[:600],
+                            "flags": [],
+                            "severity": severity,
+                            "specialist_referral": severity in ("URGENT", "MODERATE CONCERN"),
+                            "follow_ups": [],
+                        },
+                    )
+                    _maybe_urgent_push(
+                        config, name, "medical_image", severity, flags=[], referral=severity == "URGENT"
+                    )
+
                     processed_ids.append(file_id)
                     results.append({
                         "file": name,
@@ -150,6 +171,18 @@ def sync_drive_reports(
             kind = "unclassified"
         metadata["kind"] = kind
 
+        # AI-summarize the report text (M2). Best-effort; non-blocking on failure.
+        summary = None
+        if raw_text:
+            try:
+                from .report_summarizer import summarize_report_text
+
+                summary = summarize_report_text(config, kind, raw_text, filename=name)
+                if summary:
+                    metadata["ai_summary"] = summary
+            except Exception as exc:
+                print(f"  Summarize failed for {name}: {exc}")
+
         # Store
         if config.database_url:
             save_lab_document_db(config, kind, day.isoformat(), raw_text, metadata)
@@ -160,11 +193,99 @@ def sync_drive_reports(
                 **metadata,
             })
 
+        # Record as "new report" for today's advisor banner (M1) + urgent push (M3)
+        try:
+            from .report_summarizer import save_new_report
+
+            save_new_report(config, day, kind, name, file_id, summary)
+        except Exception as exc:
+            print(f"  save_new_report failed for {name}: {exc}")
+
+        if summary:
+            _maybe_urgent_push(
+                config,
+                name,
+                kind,
+                summary.get("severity"),
+                flags=summary.get("flags", []),
+                referral=summary.get("specialist_referral", False),
+            )
+            # Test-type-specific workflows (M5)
+            try:
+                from .report_workflows import run_post_ingestion_workflows
+
+                run_post_ingestion_workflows(config, kind, name, summary)
+            except Exception as exc:
+                print(f"  report_workflow failed for {name}: {exc}")
+
         processed_ids.append(file_id)
-        results.append({"file": name, "kind": kind, "file_id": file_id})
+        results.append({
+            "file": name,
+            "kind": kind,
+            "file_id": file_id,
+            "severity": (summary or {}).get("severity"),
+        })
 
         # Clean up temp file
         local_path.unlink(missing_ok=True)
 
     _save_sync_state(config.data_dir, {"processed_ids": processed_ids})
+
+    # Morning summary WhatsApp ping — one message listing what's new (M1)
+    if results:
+        try:
+            _send_new_reports_whatsapp_summary(config, results)
+        except Exception as exc:
+            print(f"  new-reports WhatsApp summary failed: {exc}")
+
     return results
+
+
+def _maybe_urgent_push(
+    config: SyncConfig,
+    filename: str,
+    kind: str,
+    severity: str | None,
+    flags: list,
+    referral: bool,
+) -> None:
+    """Send immediate WhatsApp alert if the report is URGENT or needs a specialist (M3)."""
+    if not severity:
+        return
+    sev = str(severity).upper()
+    if "URGENT" not in sev and not referral:
+        return
+    try:
+        from .whatsapp_sender import _run_openclaw_send
+
+        tag = "🚨 URGENT" if "URGENT" in sev else "⚠️ Specialist"
+        lines = [f"{tag} — new {kind} report needs attention"]
+        lines.append(f"File: {filename}")
+        if flags:
+            lines.append("Flags: " + " · ".join(flags[:3]))
+        lines.append("Full summary in today's 8 AM email.")
+        _run_openclaw_send("\n".join(lines))
+    except Exception as exc:
+        print(f"  urgent WhatsApp push failed: {exc}")
+
+
+def _send_new_reports_whatsapp_summary(
+    config: SyncConfig, results: List[Dict[str, Any]]
+) -> None:
+    """One-message digest when new reports land during the morning Drive sync."""
+    try:
+        from .whatsapp_sender import _run_openclaw_send
+    except Exception:
+        return
+    kinds = {}
+    for r in results:
+        kinds[r.get("kind", "report")] = kinds.get(r.get("kind", "report"), 0) + 1
+    if not kinds:
+        return
+    parts = [f"{n} {k}" for k, n in kinds.items()]
+    msg = (
+        "🧪 New medical reports detected: "
+        + ", ".join(parts)
+        + "\nSummary in today's 8 AM plan."
+    )
+    _run_openclaw_send(msg)
