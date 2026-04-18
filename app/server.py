@@ -128,6 +128,42 @@ def create_app() -> FastAPI:
         actions = load_actions_with_sheets(config, date)
         return HTMLResponse(_render_action_page(date, idx, actions, done=False, success=True))
 
+    # ── Genetic analysis viewer ──
+    @dashboard_app.get("/genetics")
+    async def genetics_view():
+        from app.sync.genetic_analysis import load_summary, render_markdown
+
+        summary = load_summary(config.data_dir)
+        if not summary:
+            return HTMLResponse(
+                "<h2>No genetic summary on file.</h2>"
+                "<p>Run analysis: <code>python -m app.sync.genetic_analysis</code>.</p>"
+            )
+        # Lightweight HTML wrapper around the markdown
+        import re as _re
+
+        md = render_markdown(summary)
+        html = md
+        html = _re.sub(r"^# (.+)$", r"<h1>\1</h1>", html, flags=_re.MULTILINE)
+        html = _re.sub(r"^## (.+)$", r"<h2>\1</h2>", html, flags=_re.MULTILINE)
+        html = _re.sub(r"^### (.+)$", r"<h3>\1</h3>", html, flags=_re.MULTILINE)
+        html = _re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", html)
+        html = _re.sub(r"\*(.+?)\*", r"<em>\1</em>", html)
+        html = _re.sub(r"`([^`]+)`", r"<code>\1</code>", html)
+        html = html.replace("\n\n", "<br><br>").replace("\n", "<br>")
+        return HTMLResponse(
+            f"<html><body style='font-family:-apple-system,sans-serif;"
+            f"max-width:760px;margin:0 auto;padding:20px;color:#1a1a1a;'>"
+            f"{html}</body></html>"
+        )
+
+    @dashboard_app.get("/genetics.json")
+    async def genetics_json():
+        from app.sync.genetic_analysis import load_summary
+
+        summary = load_summary(config.data_dir)
+        return JSONResponse(summary or {"error": "no genetic summary"})
+
     # ── WhatsApp inbound webhook (I1, I2, I3) ──
     @dashboard_app.post("/whatsapp/inbound")
     async def whatsapp_inbound(payload: dict):

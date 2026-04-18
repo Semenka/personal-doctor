@@ -121,6 +121,14 @@ def _gather_context(
     except Exception:
         context["marker_trends"] = {}
 
+    # Curated genetic analysis (persistent, loads every day)
+    try:
+        from .genetic_analysis import load_summary as _load_genetic
+
+        context["genetic_summary"] = _load_genetic(config.data_dir)
+    except Exception:
+        context["genetic_summary"] = None
+
     return context
 
 
@@ -327,6 +335,27 @@ def _build_prompt(context: Dict[str, Any]) -> str:
             "and adapt the priority action to address the most important finding."
         )
         sections.append("\n".join(lines))
+
+    # ── Curated genetic analysis (actionable-only findings) ──
+    genetic = context.get("genetic_summary")
+    if genetic and genetic.get("results"):
+        actionable = [
+            r for r in genetic["results"]
+            if r.get("genotype_classified") not in (None, "0/0", "unknown")
+            and not str(r.get("genotype_classified", "")).startswith("mismatch")
+        ]
+        if actionable:
+            lines = [
+                "## 🧬 Curated genetic findings (actionable non-reference genotypes)",
+                "These are locked facts about the patient's DNA. Factor them into every protocol when relevant.",
+            ]
+            for r in actionable[:20]:
+                lines.append(
+                    f"- **{r.get('gene')}** "
+                    + (f"({r.get('variant')}) " if r.get('variant') else "")
+                    + f"[{r.get('genotype_classified')}] — {r.get('interpretation')}"
+                )
+            sections.append("\n".join(lines))
 
     # ── Cross-report marker trends (M4) ──
     marker_trends = context.get("marker_trends", {})
