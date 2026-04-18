@@ -26,7 +26,7 @@ logger = logging.getLogger("personal-doctor.anomaly_detector")
 def _history(config: SyncConfig, today: date, days: int = 14):
     from .trend_analyzer import load_oura_history
 
-    return load_oura_history(config.data_dir, today, days=days)
+    return load_oura_history(config.data_dir, today, num_days=days)
 
 
 def _week_avg(history, key: str) -> float | None:

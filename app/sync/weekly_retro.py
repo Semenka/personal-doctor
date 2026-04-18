@@ -22,9 +22,9 @@ logger = logging.getLogger("personal-doctor.weekly_retro")
 def _week_metrics(config: SyncConfig, today: date) -> Dict[str, Any]:
     from .trend_analyzer import compute_rolling_averages, load_oura_history
 
-    current_week = load_oura_history(config.data_dir, today, days=7)
+    current_week = load_oura_history(config.data_dir, today, num_days=7)
     prior_week = load_oura_history(
-        config.data_dir, today - timedelta(days=7), days=7
+        config.data_dir, today - timedelta(days=7), num_days=7
     )
     cur_avg = compute_rolling_averages(current_week)
     prior_avg = compute_rolling_averages(prior_week)
