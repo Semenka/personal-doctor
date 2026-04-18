@@ -129,6 +129,14 @@ def _gather_context(
     except Exception:
         context["genetic_summary"] = None
 
+    # Upcoming checkups (next 14 days) for daily nudge
+    try:
+        from .checkup_schedule import upcoming_checkups
+
+        context["upcoming_checkups"] = upcoming_checkups(config, within_days=14)
+    except Exception:
+        context["upcoming_checkups"] = []
+
     return context
 
 
@@ -333,6 +341,20 @@ def _build_prompt(context: Dict[str, Any]) -> str:
         lines.append(
             "\nOpen today's plan with a brief acknowledgement of the new report(s) "
             "and adapt the priority action to address the most important finding."
+        )
+        sections.append("\n".join(lines))
+
+    # ── Upcoming checkups (medical scheduling reminder) ──
+    upcoming = context.get("upcoming_checkups", [])
+    if upcoming:
+        lines = ["## 📅 Upcoming check-ups (next 14 days)"]
+        for item in upcoming[:5]:
+            days = item.get("days_away", 0)
+            when = "today" if days == 0 else f"in {days}d" if days > 0 else f"{-days}d overdue"
+            lines.append(f"- **{item.get('name')}** — {when} ({item.get('next_due')})")
+        lines.append(
+            "\nIf any of these are due today or in the next 3 days, mention in the "
+            "Progress or Fertility checkpoint section so the user books it."
         )
         sections.append("\n".join(lines))
 
