@@ -65,22 +65,34 @@ def fetch_daily_summary(config: SyncConfig, day: date) -> Dict[str, Any]:
         activity_is_previous = True
 
     # sleep periods endpoint has detailed metrics (duration, HR, HRV)
-    # that are NOT available in daily_sleep
-    sleep_periods = _fetch_collection(config, token, "sleep", day, day)
+    # that are NOT available in daily_sleep.
+    # Oura attributes sleep to the date it STARTED, so overnight sleep
+    # (e.g. 23:00 Apr 20 -> 07:00 Apr 21) has day=Apr 20.
+    # We check both the target day AND the previous day to find the
+    # overnight sleep that corresponds to today's daily_sleep score.
+    yesterday = day - timedelta(days=1)
+    sleep_periods = (
+        _fetch_collection(config, token, "sleep", yesterday, yesterday) +
+        _fetch_collection(config, token, "sleep", day, day)
+    )
 
-    # Find the primary (long) sleep period (period == 0) or use the first one
+    # Find the primary sleep period:
+    # 1. Prefer type=long_sleep (avoids trusting period==0 which can be a nap)
+    # 2. Fall back to the longest period by total duration
+    def _sleep_duration(sp):
+        return (
+            (sp.get("deep_sleep_duration") or 0) +
+            (sp.get("light_sleep_duration") or 0) +
+            (sp.get("rem_sleep_duration") or 0)
+        )
+
     primary_sleep = {}
-    for sp in sleep_periods:
-        if sp.get("period", -1) == 0:
-            primary_sleep = sp
-            break
-    if not primary_sleep and sleep_periods:
-        # Fall back to longest period
-        primary_sleep = max(sleep_periods, key=lambda s: (
-            (s.get("deep_sleep_duration") or 0) +
-            (s.get("light_sleep_duration") or 0) +
-            (s.get("rem_sleep_duration") or 0)
-        ))
+    long_sleeps = [sp for sp in sleep_periods if sp.get("type") == "long_sleep"]
+    if long_sleeps:
+        # Pick the most recent long_sleep (closest to waking up on target day)
+        primary_sleep = max(long_sleeps, key=lambda s: s.get("bedtime_end", ""))
+    elif sleep_periods:
+        primary_sleep = max(sleep_periods, key=_sleep_duration)
 
     return {
         "daily_sleep": daily_sleep[0] if daily_sleep else {},
