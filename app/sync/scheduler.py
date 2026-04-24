@@ -175,8 +175,10 @@ def run_daily_advisor() -> None:
     from datetime import datetime
 
     config = load_config()
-    if not config.google_api_key:
-        print("Skipping daily advisor: GOOGLE_API_KEY not set.")
+    from .daily_advisor import advisor_has_credentials
+
+    if not advisor_has_credentials(config):
+        print("Skipping daily advisor: advisor API key not set for selected model.")
         return
 
     day = datetime.now(tz=config.timezone).date()

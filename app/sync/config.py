@@ -21,6 +21,7 @@ class SyncConfig:
     openalex_mailto: str | None
     gdrive_credentials_dir: str | None
     google_api_key: str | None
+    openai_api_key: str | None
     email_to: str | None
     smtp_host: str | None
     smtp_port: int | None
@@ -39,6 +40,7 @@ def load_config() -> SyncConfig:
     openalex_mailto = os.getenv("OPENALEX_MAILTO")
     gdrive_credentials_dir = os.getenv("GDRIVE_CREDENTIALS_DIR")
     google_api_key = os.getenv("GOOGLE_API_KEY")
+    openai_api_key = os.getenv("OPENAI_API_KEY")
     email_to = os.getenv("EMAIL_TO")
     smtp_host = os.getenv("SMTP_HOST")
     smtp_port_str = os.getenv("SMTP_PORT", "465")
@@ -54,6 +56,7 @@ def load_config() -> SyncConfig:
         openalex_mailto=openalex_mailto,
         gdrive_credentials_dir=gdrive_credentials_dir,
         google_api_key=google_api_key,
+        openai_api_key=openai_api_key,
         email_to=email_to,
         smtp_host=smtp_host,
         smtp_port=int(smtp_port_str) if smtp_port_str else 587,

@@ -92,14 +92,15 @@ def main() -> None:
     if args.source == "advisor":
         from .daily_advisor import (
             email_advice,
+            advisor_has_credentials,
             generate_daily_advice,
             print_advice,
             save_advice_local,
             upload_advice_to_drive,
         )
 
-        if not config.google_api_key:
-            raise SystemExit("GOOGLE_API_KEY is required for the daily advisor")
+        if not advisor_has_credentials(config):
+            raise SystemExit("Advisor API key is required for the selected model")
         advice = generate_daily_advice(config, day)
         print_advice(advice)
         local = save_advice_local(config, advice)

@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 import re
+
+import requests
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -24,6 +26,56 @@ from .config import SyncConfig
 from .storage import load_daily_payload, load_lab_documents
 
 DEFAULT_MODEL = "gemini-3.1-flash-lite-preview"
+
+
+def _is_openai_model(model: str) -> bool:
+    m = (model or "").strip().lower()
+    return m.startswith("gpt") or m.startswith("openai/") or "codex" in m
+
+
+def advisor_model(config: SyncConfig) -> str:
+    return config.gemini_model or DEFAULT_MODEL
+
+
+def advisor_has_credentials(config: SyncConfig) -> bool:
+    model = advisor_model(config)
+    if _is_openai_model(model):
+        return bool(getattr(config, "openai_api_key", None))
+    return bool(config.google_api_key)
+
+
+def _call_openai(model: str, api_key: str, system: str, user_message: str) -> str:
+    # Support models like "openai/gpt-5.3-codex" and plain "gpt-5.3-codex"
+    model_name = model.split("/", 1)[1] if model.startswith("openai/") else model
+    resp = requests.post(
+        "https://api.openai.com/v1/responses",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": model_name,
+            "input": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user_message},
+            ],
+            "max_output_tokens": 1800,
+        },
+        timeout=120,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    text = (data.get("output_text") or "").strip()
+    if text:
+        return text
+
+    parts = []
+    for item in data.get("output", []) or []:
+        for c in item.get("content", []) or []:
+            t = c.get("text")
+            if t:
+                parts.append(t)
+    return "\n".join(parts).strip()
 
 
 def _gather_context(
@@ -623,29 +675,38 @@ def generate_daily_advice(
     if day is None:
         day = datetime.now(tz=config.timezone).date()
 
-    if not config.google_api_key:
-        raise RuntimeError(
-            "GOOGLE_API_KEY is required for the daily advisor. "
-            "Set it in your environment."
-        )
+    model = advisor_model(config)
 
-    model = config.gemini_model or DEFAULT_MODEL
+    if _is_openai_model(model):
+        if not getattr(config, "openai_api_key", None):
+            raise RuntimeError(
+                "OPENAI_API_KEY is required for OpenAI advisor models. "
+                "Set it in your environment."
+            )
+    else:
+        if not config.google_api_key:
+            raise RuntimeError(
+                "GOOGLE_API_KEY is required for Gemini advisor models. "
+                "Set it in your environment."
+            )
 
     context = _gather_context(config, day)
     user_message = _build_prompt(context)
     system = SYSTEM_PROMPT.replace("{date}", day.isoformat())
 
-    client = genai.Client(api_key=config.google_api_key)
-    response = client.models.generate_content(
-        model=model,
-        contents=user_message,
-        config=types.GenerateContentConfig(
-            system_instruction=system,
-            max_output_tokens=1800,
-        ),
-    )
-
-    advice_text = response.text
+    if _is_openai_model(model):
+        advice_text = _call_openai(model, config.openai_api_key, system, user_message)
+    else:
+        client = genai.Client(api_key=config.google_api_key)
+        response = client.models.generate_content(
+            model=model,
+            contents=user_message,
+            config=types.GenerateContentConfig(
+                system_instruction=system,
+                max_output_tokens=1800,
+            ),
+        )
+        advice_text = response.text
 
     # Parse and save action items for tracking (email buttons + feedback loop)
     try:

@@ -93,12 +93,14 @@ def main() -> int:
     # ── Step 3: AI Daily Advisor ────────────────────────────────────
     print("[3/4] AI Daily Advisor (Gemini 3 Flash)...")
     advice = None
-    if not config.google_api_key:
-        print("  FAIL: GOOGLE_API_KEY not set.")
+    if not advisor_has_credentials(config):
+        print("  FAIL: Advisor API key not set for selected model.")
     else:
         from .daily_advisor import (
+            advisor_has_credentials,
             build_stale_oura_advice,
             email_advice,
+            advisor_has_credentials,
             generate_daily_advice,
             save_advice_local,
             upload_advice_to_drive,
