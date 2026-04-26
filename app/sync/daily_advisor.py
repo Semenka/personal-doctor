@@ -181,13 +181,15 @@ def _gather_context(
     except Exception:
         context["genetic_summary"] = None
 
-    # Upcoming checkups (next 14 days) for daily nudge
+    # Upcoming checkups (next 14 days) + batched lab visits (next 30 days)
     try:
-        from .checkup_schedule import upcoming_checkups
+        from .checkup_schedule import upcoming_checkups, upcoming_lab_visits
 
         context["upcoming_checkups"] = upcoming_checkups(config, within_days=14)
+        context["upcoming_lab_visits"] = upcoming_lab_visits(config, within_days=30)
     except Exception:
         context["upcoming_checkups"] = []
+        context["upcoming_lab_visits"] = []
 
     return context
 
@@ -398,15 +400,42 @@ def _build_prompt(context: Dict[str, Any]) -> str:
 
     # ── Upcoming checkups (medical scheduling reminder) ──
     upcoming = context.get("upcoming_checkups", [])
-    if upcoming:
-        lines = ["## 📅 Upcoming check-ups (next 14 days)"]
-        for item in upcoming[:5]:
-            days = item.get("days_away", 0)
-            when = "today" if days == 0 else f"in {days}d" if days > 0 else f"{-days}d overdue"
-            lines.append(f"- **{item.get('name')}** — {when} ({item.get('next_due')})")
+    lab_visits = context.get("upcoming_lab_visits", [])
+    if upcoming or lab_visits:
+        lines = ["## 📅 Upcoming check-ups"]
+
+        # Each batched lab visit is rendered as one block: lab + dated visit +
+        # the union of French panel names to put on the request slip. This
+        # collapses 5 separate test reminders into one bookable visit.
+        for v in lab_visits[:3]:
+            days = v.get("days_away", 0)
+            when = "today" if days == 0 else f"in {days}d"
+            lines.append(
+                f"### Lab visit — {when} ({v['date']})  [{v['label']}]"
+            )
+            lines.append(f"**Lab:** {v['lab_provider']} — {v['lab_address']}")
+            if v.get("panels"):
+                lines.append("**Request slip — ask for these panels:**")
+                for p in v["panels"]:
+                    lines.append(f"  • {p}")
+            lines.append("")
+
+        # Specialist / non-bundled reminders (DEXA, dermatology, ECG, BP at home)
+        non_lab = [
+            i for i in upcoming
+            if not i.get("bundle") or i.get("bundle") == "specialist"
+        ]
+        if non_lab:
+            lines.append("### Other reminders (next 14 days)")
+            for item in non_lab[:5]:
+                days = item.get("days_away", 0)
+                when = "today" if days == 0 else f"in {days}d" if days > 0 else f"{-days}d overdue"
+                lines.append(f"- **{item.get('name')}** — {when} ({item.get('next_due')})")
+
         lines.append(
-            "\nIf any of these are due today or in the next 3 days, mention in the "
-            "Progress or Fertility checkpoint section so the user books it."
+            "\nWhen a lab visit is within 7 days, mention it in the Progress or "
+            "Fertility checkpoint section so the user actually books the appointment "
+            "and brings the request slip."
         )
         sections.append("\n".join(lines))
 
