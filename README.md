@@ -29,7 +29,11 @@ This creates a Python venv, installs everything, prompts for credentials, instal
 
 | What | How |
 |------|-----|
-| Web dashboard | http://localhost:8000 |
+| Main dashboard | http://localhost:8000 |
+| Oura trends dashboard | http://localhost:8000/dashboard |
+| Biomarker time-series dashboard | http://localhost:8000/biomarkers |
+| Genetics dashboard | http://localhost:8000/genetics |
+| Action tracker dashboard | http://localhost:8000/actions |
 | Health check | `curl http://localhost:8000/health` |
 | Trigger pipeline now | `curl -X POST http://localhost:8000/run` |
 | Last advice (JSON) | `curl http://localhost:8000/advice` |
