@@ -128,6 +128,13 @@ def create_app() -> FastAPI:
         actions = load_actions_with_sheets(config, date)
         return HTMLResponse(_render_action_page(date, idx, actions, done=False, success=True))
 
+    # ── Biomarker dashboard (semen + blood time-series) ──
+    @dashboard_app.get("/biomarkers", response_class=HTMLResponse)
+    async def biomarkers_view():
+        from app.sync.biomarker_dashboard import render_full_html_page
+
+        return HTMLResponse(render_full_html_page(config))
+
     # ── Genetic analysis viewer ──
     @dashboard_app.get("/genetics")
     async def genetics_view():

@@ -326,6 +326,15 @@ def send_advice_email(config: SyncConfig, advice: Dict[str, Any]) -> None:
     # Highlight the single highest-impact action (F9)
     best_mover_html = _build_best_mover_html(config, day)
 
+    # Biomarker dashboard — sparklines for blood + spermogram time-series
+    biomarker_html = ""
+    try:
+        from .biomarker_dashboard import render_email_dashboard_html
+
+        biomarker_html = render_email_dashboard_html(config)
+    except Exception:
+        biomarker_html = ""
+
     # Build execution dashboard (7-day history + effects)
     execution_dashboard_html = _build_execution_dashboard_html(config, day)
 
@@ -358,6 +367,7 @@ def send_advice_email(config: SyncConfig, advice: Dict[str, Any]) -> None:
   </div>
   {best_mover_html}
   {html_body}
+  {biomarker_html}
   {execution_dashboard_html}
   {action_buttons_html}
   <div class="footer">

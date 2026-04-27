@@ -191,6 +191,14 @@ def _gather_context(
         context["upcoming_checkups"] = []
         context["upcoming_lab_visits"] = []
 
+    # Biomarker trends from blood tests + spermograms (≥2 readings)
+    try:
+        from .biomarker_trends import summarize_for_advisor
+
+        context["biomarker_trends"] = summarize_for_advisor(config, top_n=6)
+    except Exception:
+        context["biomarker_trends"] = []
+
     return context
 
 
@@ -396,6 +404,31 @@ def _build_prompt(context: Dict[str, Any]) -> str:
             "\nOpen today's plan with a brief acknowledgement of the new report(s) "
             "and adapt the priority action to address the most important finding."
         )
+        sections.append("\n".join(lines))
+
+    # ── Biomarker time-series trends (blood + spermogram) ──
+    bm_trends = context.get("biomarker_trends", [])
+    if bm_trends:
+        lines = [
+            "## 📊 Biomarker time-series (markers with ≥2 readings)",
+            "",
+            "Use these in the Why / What-to-avoid / Nutrition focus sections "
+            "of today's plan when relevant. Always cite the actual numbers "
+            "(e.g., 'your testosterone went from 540 to 612 ng/dL') so the "
+            "patient sees the data, not just the recommendation.",
+            "",
+        ]
+        for t in bm_trends:
+            opt = t.get("optimal_range")
+            opt_str = f" (optimal {opt[0]}–{opt[1]} {t['unit']})" if opt and any(opt) else ""
+            flag_str = f" [**{t['last_flagged']}**]" if t.get("last_flagged") in ("low", "high") else ""
+            cit = ", ".join(t.get("citations") or [])
+            lines.append(
+                f"- **{t['name']}**: {t['first_value']:g} → {t['last_value']:g} "
+                f"{t['unit']} ({t['pct_change']:+.1f}% over {t['days_span']}d, "
+                f"{t['n_points']} readings, {t['direction']}){flag_str}{opt_str}"
+                + (f" — {cit}" if cit else "")
+            )
         sections.append("\n".join(lines))
 
     # ── Upcoming checkups (medical scheduling reminder) ──

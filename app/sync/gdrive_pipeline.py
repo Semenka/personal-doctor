@@ -183,6 +183,32 @@ def sync_drive_reports(
             except Exception as exc:
                 print(f"  Summarize failed for {name}: {exc}")
 
+        # Structured biomarker extraction → time-series + dashboard.
+        # Triggered for any lab-style document; spermograms, blood tests,
+        # hormone panels, etc. Stored in data/ingested/biomarkers/results.jsonl
+        # so the daily email + advisor + /biomarkers page can chart trends.
+        biomarker_alerts: List[Dict[str, Any]] = []
+        if raw_text and kind in (
+            "blood_test", "urine_test", "sperm_test",
+            "hormone_panel", "health_check", "genetic_test",
+        ):
+            try:
+                from .biomarker_extractor import extract_and_save
+                from .biomarker_trends import alert_changes
+
+                new_readings = extract_and_save(
+                    config, raw_text, source_kind=kind,
+                    source_file=name, draw_date=day.isoformat(),
+                )
+                if new_readings:
+                    metadata["biomarker_count"] = len(new_readings)
+                    metadata["biomarkers"] = [r.biomarker_id for r in new_readings]
+                    biomarker_alerts = alert_changes(
+                        [r.to_dict() for r in new_readings], config,
+                    )
+            except Exception as exc:
+                print(f"  Biomarker extraction failed for {name}: {exc}")
+
         # Store
         if config.database_url:
             save_lab_document_db(config, kind, day.isoformat(), raw_text, metadata)
@@ -218,12 +244,18 @@ def sync_drive_reports(
             except Exception as exc:
                 print(f"  report_workflow failed for {name}: {exc}")
 
+        # Biomarker change push — fires when a tracked marker moved ≥15% since
+        # the previous draw or is newly out of reference range.
+        if biomarker_alerts:
+            _maybe_biomarker_push(config, name, kind, biomarker_alerts)
+
         processed_ids.append(file_id)
         results.append({
             "file": name,
             "kind": kind,
             "file_id": file_id,
             "severity": (summary or {}).get("severity"),
+            "biomarker_alerts": biomarker_alerts,
         })
 
         # Clean up temp file
@@ -289,3 +321,38 @@ def _send_new_reports_whatsapp_summary(
         + "\nSummary in today's 8 AM plan."
     )
     _run_openclaw_send(msg)
+
+
+def _maybe_biomarker_push(
+    config: SyncConfig,
+    filename: str,
+    kind: str,
+    alerts: List[Dict[str, Any]],
+) -> None:
+    """Immediate WhatsApp ping when a new lab moved a tracked biomarker ≥15%
+    or pushed it out of reference range.
+    """
+    if not alerts:
+        return
+    try:
+        from .whatsapp_sender import _run_openclaw_send
+    except Exception:
+        return
+
+    lines = [f"📊 New {kind} — {filename}", ""]
+    lines.append(f"{len(alerts)} biomarker(s) moved meaningfully:")
+    for a in alerts[:6]:
+        if a.get("kind") == "delta":
+            arrow = {"improving": "✅", "declining": "⚠️"}.get(a.get("direction"), "•")
+            lines.append(
+                f"{arrow} {a['marker_name']}: {a['from_value']:g} → "
+                f"{a['to_value']:g} {a.get('unit','')} ({a['pct_change']:+.0f}%)"
+            )
+        else:
+            lines.append(
+                f"⚠️ {a['marker_name']} {a.get('flagged','')}: "
+                f"{a.get('value','?')} {a.get('unit','')} (first reading, out of range)"
+            )
+    lines.append("")
+    lines.append("Full charts: http://localhost:8000/biomarkers")
+    _run_openclaw_send("\n".join(lines))
