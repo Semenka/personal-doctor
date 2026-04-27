@@ -132,15 +132,42 @@ def _improving(marker: Biomarker, pct: float) -> str:
         return "improving" if rising else "declining"
     if marker.direction == "lower_better":
         return "improving" if not rising else "declining"
-    # mid_optimal: improvement = moving toward the optimal band's center
-    mid = None
+    # mid_optimal: improvement requires comparing distance-to-optimal-midpoint
+    # before vs after. We don't have raw values here, so fall back to:
+    # "improving" only if motion is plausibly toward the optimal range.
+    # The caller has the actual values, so it should pass them via
+    # _improving_with_values when accuracy matters.
+    return "stable"
+
+
+def _improving_with_values(
+    marker: Biomarker, first: float, last: float
+) -> str:
+    """Direction respecting polarity and (for mid_optimal) actual distance-to-mid."""
+    if first == 0:
+        return "stable"
+    pct = (last - first) / first
+    if abs(pct) < 0.05:
+        return "stable"
+    if marker.direction == "higher_better":
+        return "improving" if last > first else "declining"
+    if marker.direction == "lower_better":
+        return "improving" if last < first else "declining"
+    # mid_optimal: did the value move closer to the optimal midpoint?
+    mid: Optional[float] = None
     if marker.optimal_low is not None and marker.optimal_high is not None:
         mid = (marker.optimal_low + marker.optimal_high) / 2
     elif marker.ref_low is not None and marker.ref_high is not None:
         mid = (marker.ref_low + marker.ref_high) / 2
     if mid is None:
-        return "improving" if rising else "declining"
-    return "improving" if abs(pct) > 0 else "stable"
+        return "stable"
+    d_first = abs(first - mid)
+    d_last = abs(last - mid)
+    if d_last < d_first * 0.95:
+        return "improving"
+    if d_last > d_first * 1.05:
+        return "declining"
+    return "stable"
 
 
 def compute_trend(config: SyncConfig, marker_id: str) -> Optional[Trend]:
@@ -151,7 +178,7 @@ def compute_trend(config: SyncConfig, marker_id: str) -> Optional[Trend]:
     first, last = pts[0], pts[-1]
     delta = round(last.value - first.value, 3)
     pct = (last.value - first.value) / first.value if first.value else 0.0
-    direction = _improving(marker, pct)
+    direction = _improving_with_values(marker, first.value, last.value)
     try:
         d0 = date.fromisoformat(first.date)
         d1 = date.fromisoformat(last.date)

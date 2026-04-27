@@ -138,22 +138,71 @@ def _trend_arrow(direction: str) -> str:
     }.get(direction, "")
 
 
-def render_email_dashboard_html(config: SyncConfig, max_markers: int = 8) -> str:
+def _status_pill(marker: Biomarker, value: float, flagged: Optional[str]) -> str:
+    """Return an inline-HTML pill showing where this value sits vs reference + optimal."""
+    if flagged == "high":
+        text = f"Above reference (>{marker.ref_high} {marker.unit})"
+        bg, fg = "#fee2e2", "#991b1b"
+    elif flagged == "low":
+        text = f"Below reference (<{marker.ref_low} {marker.unit})"
+        bg, fg = "#fee2e2", "#991b1b"
+    elif flagged == "optimal":
+        bits = []
+        if marker.optimal_low is not None:
+            bits.append(f"≥{marker.optimal_low}")
+        if marker.optimal_high is not None:
+            bits.append(f"≤{marker.optimal_high}")
+        text = f"Optimal ({' & '.join(bits)} {marker.unit})"
+        bg, fg = "#dcfce7", "#166534"
+    else:
+        # In reference range but not in research-backed optimal band
+        text = "In range — not optimal"
+        bg, fg = "#fef3c7", "#854d0e"
+    return (
+        f'<span style="display:inline-block;padding:2px 8px;border-radius:9999px;'
+        f'background:{bg};color:{fg};font-size:11px;font-weight:600;'
+        f'white-space:nowrap;">{text}</span>'
+    )
+
+
+def _ref_annotation(marker: Biomarker) -> str:
+    """Compact 'Reference: X-Y · Optimal: A-B' text under each card."""
+    parts = []
+    if marker.ref_low is not None or marker.ref_high is not None:
+        parts.append(
+            f"Reference {marker.ref_low if marker.ref_low is not None else '—'}–"
+            f"{marker.ref_high if marker.ref_high is not None else '—'} {marker.unit}"
+        )
+    if marker.optimal_low is not None or marker.optimal_high is not None:
+        parts.append(
+            f"Optimal {marker.optimal_low if marker.optimal_low is not None else '—'}–"
+            f"{marker.optimal_high if marker.optimal_high is not None else '—'} {marker.unit}"
+        )
+    return " · ".join(parts)
+
+
+def render_email_dashboard_html(config: SyncConfig, max_markers: int = 10) -> str:
     """Compact biomarker dashboard for the daily email.
 
-    Returns an empty string if no biomarker has ≥2 readings (no trend possible).
+    Ranks markers by clinical urgency (out-of-range first, then declining,
+    then improving, then stable) so the most-actionable values land on top
+    of the user's morning email instead of being buried by registry order.
+
+    Returns an empty string if no biomarker has ≥2 readings.
     """
-    keys = key_biomarkers(config, min_points=2)
-    if not keys:
+    from .biomarker_trends import summarize_for_advisor
+
+    ranked = summarize_for_advisor(config, top_n=max_markers)
+    if not ranked:
         return ""
+
     series_map = all_series(config)
     cards = []
-    for bid in keys[:max_markers]:
+    for r in ranked:
+        bid = r["id"]
         marker = BY_ID.get(bid)
-        if not marker:
-            continue
         pts = series_map.get(bid, [])
-        if len(pts) < 2:
+        if not (marker and len(pts) >= 2):
             continue
         trend = compute_trend(config, bid)
         if not trend:
@@ -161,30 +210,40 @@ def render_email_dashboard_html(config: SyncConfig, max_markers: int = 8) -> str
         spark = _svg_sparkline(pts, marker)
         arrow = _trend_arrow(trend.direction)
         last = pts[-1]
-        flag_color = {
-            "high": "#dc2626", "low": "#dc2626",
-            "optimal": "#059669",
-        }.get(last.flagged or "", "#374151")
+        pill = _status_pill(marker, last.value, last.flagged)
+        ref_txt = _ref_annotation(marker)
+        trend_color = {
+            "improving": "#059669", "declining": "#dc2626",
+        }.get(trend.direction, "#6b7280")
 
         delta_str = (
-            f"{trend.first_value:g} &rarr; {trend.last_value:g} "
-            f"<span style=\"color:#6b7280;\">({'+' if trend.delta >= 0 else ''}"
-            f"{trend.delta:g}, {trend.pct_change:+.1f}%)</span>"
+            f"<strong>{trend.first_value:g} &rarr; {trend.last_value:g}</strong> "
+            f"{marker.unit} "
+            f"<span style=\"color:#6b7280;\">"
+            f"({'+' if trend.delta >= 0 else ''}{trend.delta:g}, "
+            f"{trend.pct_change:+.1f}%)</span>"
         )
 
         cards.append(
             '<div style="border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;'
             'background:#ffffff;margin-bottom:10px;">'
-            f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+            # Title row + status pill
+            '<div style="display:flex;justify-content:space-between;'
+            'align-items:flex-start;gap:8px;flex-wrap:wrap;">'
             f'<div style="font-size:13px;font-weight:700;color:#1f2937;">'
-            f'{escape(marker.name_en)} <span style="color:#6b7280;font-weight:400;">'
-            f'({marker.unit})</span></div>'
-            f'<div style="font-size:13px;color:{flag_color};font-weight:700;">'
-            f'{arrow} {trend.direction}</div></div>'
+            f'{escape(marker.name_en)}</div>'
+            f'{pill}'
+            '</div>'
+            # Sparkline
             f'<div style="margin:6px 0 4px;">{spark}</div>'
-            f'<div style="font-size:12px;color:#374151;">{delta_str} '
-            f'<span style="color:#9ca3af;">over {trend.days_span}d, '
-            f'{trend.n_points} reading(s)</span></div>'
+            # Trend + delta
+            f'<div style="font-size:12px;color:#374151;">'
+            f'<span style="color:{trend_color};font-weight:600;">{arrow} {trend.direction}</span>'
+            f' &middot; {delta_str} '
+            f'<span style="color:#9ca3af;">({trend.n_points} reading(s) over {trend.days_span}d)</span>'
+            '</div>'
+            # Reference annotation
+            f'<div style="font-size:11px;color:#6b7280;margin-top:3px;">{ref_txt}</div>'
             '</div>'
         )
 
@@ -194,11 +253,17 @@ def render_email_dashboard_html(config: SyncConfig, max_markers: int = 8) -> str
     return (
         '<div style="margin-top:28px;padding:16px 20px;background:#f9fafb;'
         'border-radius:12px;border:1px solid #e5e7eb;">'
-        '<h3 style="color:#1e40af;margin:0 0 12px 0;font-size:16px;">'
+        '<h3 style="color:#1e40af;margin:0 0 6px 0;font-size:16px;">'
         '&#x1F4CA; Biomarker dashboard</h3>'
         '<div style="font-size:12px;color:#6b7280;margin-bottom:10px;">'
-        'Light grey = lab reference range. Light green = research-backed optimal range.'
-        '</div>' + "".join(cards) + '</div>'
+        'Ranked by urgency — out-of-range first, then biggest moves. '
+        'Light grey band on each chart = lab reference range, '
+        'light green band = research-backed optimal range.'
+        '</div>' + "".join(cards)
+        + '<div style="font-size:11px;color:#9ca3af;margin-top:8px;text-align:right;">'
+        f'<a href="{config.server_url}/biomarkers" style="color:#2563eb;">'
+        f'See all charts (vs time + vs age) &rarr;</a></div>'
+        '</div>'
     )
 
 
@@ -389,40 +454,66 @@ def render_full_html_page(config: SyncConfig) -> str:
                 if any(p.age is not None for p in pts) else ""
             )
             citations = ", ".join(marker.citations[:2]) if marker.citations else ""
-            ref_str = ""
-            if marker.ref_low is not None or marker.ref_high is not None:
-                ref_str = f"Ref {marker.ref_low or '—'} – {marker.ref_high or '—'} {marker.unit}"
-            opt_str = ""
-            if marker.optimal_low is not None or marker.optimal_high is not None:
-                opt_str = (
-                    f"Optimal {marker.optimal_low or '—'} – {marker.optimal_high or '—'} {marker.unit}"
-                )
+            ref_txt = _ref_annotation(marker)
+            last_pt = pts[-1]
+            pill = _status_pill(marker, last_pt.value, last_pt.flagged)
+            latest_str = (
+                f'<span style="font-size:18px;font-weight:700;color:#111827;">'
+                f'{last_pt.value:g}</span> '
+                f'<span style="color:#6b7280;font-size:13px;">{marker.unit}</span> '
+                f'<span style="color:#9ca3af;font-size:11px;">'
+                f'({last_pt.date}{" · age " + format(last_pt.age,".1f") + "y" if last_pt.age is not None else ""})'
+                f'</span>'
+            )
             trend_str = ""
             if trend:
                 arrow = _trend_arrow(trend.direction)
+                trend_color = {"improving": "#059669", "declining": "#dc2626"}.get(
+                    trend.direction, "#6b7280"
+                )
                 trend_str = (
-                    f'<div style="font-size:13px;color:#374151;margin-top:4px;">'
-                    f'{arrow} <strong>{trend.direction}</strong> — '
+                    f'<div style="font-size:13px;margin-top:6px;">'
+                    f'<span style="color:{trend_color};font-weight:600;">'
+                    f'{arrow} {trend.direction}</span>'
+                    f' <span style="color:#374151;">'
                     f'{trend.first_value:g} → {trend.last_value:g} '
                     f'({trend.pct_change:+.1f}%, {trend.n_points} readings, '
-                    f'{trend.days_span} days)</div>'
+                    f'{trend.days_span} days)</span></div>'
+                )
+            else:
+                trend_str = (
+                    f'<div style="font-size:12px;color:#9ca3af;margin-top:6px;">'
+                    f'Single reading — upload a follow-up test to track trend.</div>'
                 )
             age_block = (
-                f'<div><div style="font-size:10px;color:#6b7280;">vs age</div>'
-                f'{age_chart}</div>'
+                f'<div style="flex:1 1 auto;min-width:280px;">'
+                f'<div style="font-size:10px;color:#6b7280;text-transform:uppercase;'
+                f'letter-spacing:0.5px;">vs age</div>{age_chart}</div>'
                 if age_chart else ""
             )
             cards.append(
                 '<div style="border:1px solid #e5e7eb;border-radius:8px;'
                 'padding:14px;background:#fff;margin-bottom:14px;">'
+                # Header: name (FR/EN) + status pill on the right
+                '<div style="display:flex;justify-content:space-between;'
+                'align-items:flex-start;gap:8px;flex-wrap:wrap;margin-bottom:4px;">'
                 f'<div style="font-size:14px;font-weight:700;color:#111827;">'
-                f'{escape(marker.name_en)} <span style="color:#6b7280;font-weight:400;">'
+                f'{escape(marker.name_en)} '
+                f'<span style="color:#6b7280;font-weight:400;font-size:13px;">'
                 f'/ {escape(marker.name_fr)} ({marker.unit})</span></div>'
-                f'<div style="font-size:11px;color:#6b7280;margin-bottom:6px;">'
-                f'{ref_str}{" · " if ref_str and opt_str else ""}{opt_str}'
+                f'{pill}'
+                '</div>'
+                # Latest value, big
+                f'<div style="margin:4px 0 6px;">{latest_str}</div>'
+                # Reference / optimal / citation strip
+                f'<div style="font-size:11px;color:#6b7280;margin-bottom:8px;">'
+                f'{ref_txt}'
                 f'{" · " + escape(citations) if citations else ""}</div>'
+                # Charts
                 f'<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;">'
-                f'<div><div style="font-size:10px;color:#6b7280;">vs time</div>{time_chart}</div>'
+                f'<div style="flex:1 1 auto;min-width:280px;">'
+                f'<div style="font-size:10px;color:#6b7280;text-transform:uppercase;'
+                f'letter-spacing:0.5px;">vs time</div>{time_chart}</div>'
                 f'{age_block}'
                 f'</div>'
                 f'{trend_str}'
