@@ -391,3 +391,141 @@ def extract_and_save(
             f"Extracted {len(readings)} biomarker(s), saved {n} new from {source_file}"
         )
     return readings
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Vision extractor — for scanned lab reports stored as JPG/PNG (no text layer)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def extract_biomarkers_via_vision(
+    config: SyncConfig,
+    image_path: "Path",
+    source_kind: str,
+    source_file: Optional[str] = None,
+    fallback_date: Optional[str] = None,
+) -> List[BiomarkerReading]:
+    """Extract biomarkers directly from a scanned lab image using Gemini Vision.
+
+    Many users archive labs as JPG/PNG photographs of paper sheets. Those
+    files have no text layer and the regular OCR-fallback in pdf_extract.py
+    wouldn't apply. This sends the raw image bytes to the same JSON-output
+    extractor used for PDF text, so scanned spermograms and blood panels
+    populate the dashboards too.
+    """
+    from pathlib import Path as _Path
+
+    if not config.google_api_key:
+        return []
+    try:
+        from google import genai
+        from google.genai import types
+    except ImportError:
+        logger.warning("google-genai not installed; skipping vision extraction")
+        return []
+
+    image_path = _Path(image_path)
+    if not image_path.exists():
+        return []
+    image_bytes = image_path.read_bytes()
+    suffix = image_path.suffix.lower()
+    media_type = {
+        ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp",
+    }.get(suffix, "image/jpeg")
+
+    system = _EXTRACT_SYSTEM.format(registry=_registry_summary_for_prompt())
+    user_text = (
+        f"Source kind: {source_kind}\n"
+        f"Source file: {source_file or image_path.name}\n\n"
+        "This is a scanned image of a lab report (no text layer). Read the "
+        "values directly from the image and extract every numeric biomarker "
+        "you can match to the registry. If you see a date on the report, use "
+        "it as draw_date."
+    )
+
+    try:
+        client = genai.Client(api_key=config.google_api_key)
+        model = config.gemini_model or "gemini-3.1-flash-lite-preview"
+        response = client.models.generate_content(
+            model=model,
+            contents=[
+                types.Part.from_bytes(data=image_bytes, mime_type=media_type),
+                user_text,
+            ],
+            config=types.GenerateContentConfig(
+                system_instruction=system,
+                max_output_tokens=2500,
+                response_mime_type="application/json",
+            ),
+        )
+        text = (response.text or "").strip()
+    except Exception as exc:
+        logger.warning(f"Vision extraction failed for {source_file}: {exc}")
+        return []
+
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        m = re.search(r"\{.*\}", text, re.DOTALL)
+        if not m:
+            return []
+        try:
+            parsed = json.loads(m.group(0))
+        except Exception:
+            return []
+
+    draw_date = parsed.get("draw_date") or fallback_date or date.today().isoformat()
+    raw_readings = parsed.get("readings") or []
+
+    import os
+    birthdate = os.getenv("HEALTH_BIRTHDATE")
+    out: List[BiomarkerReading] = []
+    extracted_at = datetime.utcnow().isoformat() + "Z"
+    for r in raw_readings:
+        bid = (r.get("biomarker_id") or "").strip()
+        if not bid or bid not in BY_ID:
+            continue
+        try:
+            value = float(r.get("value"))
+        except (TypeError, ValueError):
+            continue
+        marker = BY_ID[bid]
+        unit = (r.get("unit") or marker.unit or "").strip()
+        ref_low = r.get("ref_low")
+        ref_high = r.get("ref_high")
+        out.append(
+            BiomarkerReading(
+                biomarker_id=bid, value=value, unit=unit,
+                date=draw_date, source_kind=source_kind,
+                source_file=source_file or image_path.name,
+                ref_low=float(ref_low) if isinstance(ref_low, (int, float)) else None,
+                ref_high=float(ref_high) if isinstance(ref_high, (int, float)) else None,
+                flagged=_flag_value(marker, value),
+                age_at_test=_age_at(birthdate, draw_date),
+                extracted_via="gemini_vision",
+                extracted_at=extracted_at,
+            )
+        )
+    return out
+
+
+def extract_image_and_save(
+    config: SyncConfig,
+    image_path: "Path",
+    source_kind: str,
+    source_file: Optional[str] = None,
+    draw_date: Optional[str] = None,
+) -> List[BiomarkerReading]:
+    """Vision-based equivalent of extract_and_save for scanned labs."""
+    readings = extract_biomarkers_via_vision(
+        config, image_path, source_kind, source_file, draw_date
+    )
+    if readings:
+        save_readings(config, readings)
+        logger.info(
+            f"Vision-extracted {len(readings)} biomarker(s) from {source_file}"
+        )
+    return readings

@@ -140,6 +140,7 @@ def _ingest_one(
 
     raw_text = ""
     pages = None
+    is_scanned_image = mime.startswith("image/")
     if mime == "application/pdf":
         try:
             extracted = extract_pdf_text(local_path)
@@ -179,15 +180,25 @@ def _ingest_one(
             {"kind": default_kind, "text": raw_text, **metadata},
         )
 
-    # Biomarker extraction (Gemini → heuristic fallback)
+    # Biomarker extraction.
+    #   PDFs           → Gemini text → heuristic fallback
+    #   JPGs / PNGs    → Gemini Vision (lab photo / scanned sheet)
     biomarker_count = 0
     try:
-        from app.sync.biomarker_extractor import extract_and_save
+        if is_scanned_image:
+            from app.sync.biomarker_extractor import extract_image_and_save
 
-        readings = extract_and_save(
-            config, raw_text, source_kind=default_kind,
-            source_file=name, draw_date=draw_date,
-        )
+            readings = extract_image_and_save(
+                config, local_path, source_kind=default_kind,
+                source_file=name, draw_date=draw_date,
+            )
+        else:
+            from app.sync.biomarker_extractor import extract_and_save
+
+            readings = extract_and_save(
+                config, raw_text, source_kind=default_kind,
+                source_file=name, draw_date=draw_date,
+            )
         biomarker_count = len(readings)
     except Exception as exc:
         print(f"    ! biomarker extract failed for {name}: {exc}")
