@@ -158,6 +158,19 @@ def send_whatsapp_advice(config: SyncConfig, advice: Dict[str, Any]) -> bool:
         # Strip trailing dash/em-dash descriptions for the WhatsApp short form
         trimmed = [w.split("—")[0].strip() for w in micro_wins]
         lines.append("⚡ Quick wins: " + " · ".join(trimmed))
+
+    # Biomarker dashboard — semen + hormones + blood/hema/vitamins,
+    # category-balanced so blood markers aren't drowned out by sperm swings.
+    try:
+        from .biomarker_dashboard import render_whatsapp_summary
+
+        bm = render_whatsapp_summary(config, per_group=3)
+        if bm:
+            lines.append("")
+            lines.append(bm)
+    except Exception as exc:
+        logger.warning(f"biomarker WhatsApp summary failed: {exc}")
+
     lines.append("")
     lines.append('Reply "1" for priority done, "2" for backup, "done" for both.')
 

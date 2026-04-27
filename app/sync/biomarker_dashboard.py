@@ -267,26 +267,62 @@ def render_email_dashboard_html(config: SyncConfig, max_markers: int = 10) -> st
     )
 
 
-def render_whatsapp_summary(config: SyncConfig, max_lines: int = 5) -> str:
-    """One-message WhatsApp summary of biggest biomarker changes."""
+_BIOMARKER_GROUPS: Dict[str, List[str]] = {
+    "🧬 Semen": ["semen"],
+    "🧪 Hormones": ["hormone"],
+    "🩸 Blood / hema / vitamins": [
+        "metabolic", "lipid", "inflam", "hema", "iron",
+        "liver_kidney", "vitamin", "thyroid", "cancer",
+    ],
+}
+
+
+def render_whatsapp_summary(
+    config: SyncConfig, per_group: int = 3, include_groups: Optional[List[str]] = None,
+) -> str:
+    """Group-balanced biomarker summary so blood markers aren't crowded out by
+    sperm parameter swings.
+
+    Categorizes every ≥2-reading marker into Semen / Hormones / Blood-Hema-
+    Vitamins, ranks each group by |%change|, and shows the top ``per_group``
+    in each. Result is a multi-section WhatsApp message with explicit labels
+    so the user sees blood test trends as prominently as semen analysis.
+    """
     keys = key_biomarkers(config, min_points=2)
     if not keys:
         return ""
-    rows = []
+
+    # Bucket each ≥2-reading marker by category
+    buckets: Dict[str, List[tuple]] = {label: [] for label in _BIOMARKER_GROUPS}
     for bid in keys:
-        t = compute_trend(config, bid)
         m = BY_ID.get(bid)
-        if not (t and m):
+        t = compute_trend(config, bid)
+        if not (m and t):
             continue
-        arrow = {"improving": "⬆", "declining": "⬇", "stable": "⬌"}[t.direction]
-        rows.append(
-            (abs(t.pct_change), f"{arrow} {m.name_en} {t.first_value:g}→{t.last_value:g} {m.unit} ({t.pct_change:+.0f}%)")
-        )
-    if not rows:
-        return ""
-    rows.sort(key=lambda r: r[0], reverse=True)
-    lines = [r[1] for r in rows[:max_lines]]
-    return "📊 " + str(len(rows)) + " markers tracked.\n" + "\n".join(lines)
+        for label, cats in _BIOMARKER_GROUPS.items():
+            if m.category in cats:
+                buckets[label].append((abs(t.pct_change), m, t))
+                break
+
+    out_lines = [f"📊 Biomarker dashboard — {sum(len(v) for v in buckets.values())} tracked"]
+    for label, items in buckets.items():
+        if include_groups and label not in include_groups:
+            continue
+        if not items:
+            continue
+        items.sort(key=lambda r: r[0], reverse=True)
+        out_lines.append("")
+        out_lines.append(label)
+        for _, m, t in items[:per_group]:
+            arrow = {"improving": "⬆", "declining": "⬇", "stable": "⬌"}[t.direction]
+            flag = ""
+            if t.last_flagged in ("low", "high"):
+                flag = f" ⚠️{t.last_flagged}"
+            out_lines.append(
+                f"{arrow} {m.name_en} {t.first_value:g}→{t.last_value:g} "
+                f"{m.unit} ({t.pct_change:+.0f}%){flag}"
+            )
+    return "\n".join(out_lines)
 
 
 # ─── Full /biomarkers page (one chart per marker, vs time and vs age) ───

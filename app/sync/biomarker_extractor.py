@@ -132,6 +132,65 @@ def _flag_value(marker: Biomarker, value: float) -> Optional[str]:
     return None
 
 
+# Per-marker sanity ceilings — any reading above these is treated as an OCR /
+# extraction error and dropped. Values are deliberately generous (5-10× the
+# clinical upper bound) so genuine high readings still pass; only nonsense
+# ("Total sperm count = 1680 M" extracted from prose) gets filtered.
+_SANITY_CEILING: Dict[str, float] = {
+    "semen_volume": 12.0,                 # mL — normal max ~7
+    "sperm_concentration": 400.0,         # M/mL — extreme polyzoospermia ~250
+    "sperm_total_count": 1500.0,          # M — extreme cases ~1000
+    "sperm_progressive_motility": 100.0,  # %
+    "sperm_total_motility": 100.0,        # %
+    "sperm_normal_morphology": 100.0,
+    "sperm_dna_fragmentation": 100.0,
+    "sperm_vitality": 100.0,
+    "testosterone_total": 2000.0,         # ng/dL — supraphys >1500
+    "shbg": 200.0,
+    "lh": 50.0,
+    "fsh": 50.0,
+    "estradiol": 200.0,
+    "prolactin": 100.0,                   # >100 = clinical hyperprolactinemia
+    "glucose_fasting": 500.0,
+    "hba1c": 18.0,
+    "ldl": 400.0,
+    "hdl": 150.0,
+    "triglycerides": 1500.0,
+    "apob": 300.0,
+    "lp_a": 500.0,
+    "crp_hs": 50.0,
+    "hemoglobin": 22.0,
+    "hematocrit": 65.0,
+    "ferritin": 2000.0,
+    "vitamin_d_25oh": 200.0,
+    "vitamin_b12": 5000.0,
+    "homocysteine": 100.0,
+    "zinc": 300.0,
+    "tsh": 50.0,
+    "psa_total": 100.0,
+}
+
+# Per-marker sanity floors (small set) — common typos like "0.5 ng/dL" for T.
+_SANITY_FLOOR: Dict[str, float] = {
+    "testosterone_total": 50.0,
+    "hemoglobin": 5.0,
+    "hba1c": 3.0,
+}
+
+
+def _within_sanity(marker_id: str, value: float) -> bool:
+    """Reject obviously wrong values (Vision OCR, mis-paired units, etc.)."""
+    if value < 0:
+        return False
+    ceiling = _SANITY_CEILING.get(marker_id)
+    if ceiling is not None and value > ceiling:
+        return False
+    floor = _SANITY_FLOOR.get(marker_id)
+    if floor is not None and value < floor:
+        return False
+    return True
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # AI extractor
 # ─────────────────────────────────────────────────────────────────────────────
@@ -270,6 +329,9 @@ def extract_biomarkers_via_gemini(
         except (TypeError, ValueError):
             continue
         marker = BY_ID[bid]
+        if not _within_sanity(bid, value):
+            logger.info(f"  drop sanity-fail {bid}={value} from {source_file}")
+            continue
         unit = (r.get("unit") or marker.unit or "").strip()
         ref_low = r.get("ref_low")
         ref_high = r.get("ref_high")
@@ -341,6 +403,8 @@ def extract_biomarkers_heuristic(
         try:
             value = float(val_str.replace(",", "."))
         except ValueError:
+            continue
+        if not _within_sanity(marker.id, value):
             continue
         seen.add(marker.id)
         out.append(
@@ -493,6 +557,9 @@ def extract_biomarkers_via_vision(
         except (TypeError, ValueError):
             continue
         marker = BY_ID[bid]
+        if not _within_sanity(bid, value):
+            logger.info(f"  drop sanity-fail {bid}={value} from {source_file}")
+            continue
         unit = (r.get("unit") or marker.unit or "").strip()
         ref_low = r.get("ref_low")
         ref_high = r.get("ref_high")
