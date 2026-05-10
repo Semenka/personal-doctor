@@ -190,7 +190,30 @@ def run_daily_advisor() -> None:
         save_advice_local,
         upload_advice_to_drive,
     )
-    from .pipeline import check_oura_freshness
+    from .pipeline import check_oura_freshness, oura_data_is_fresh
+    from .storage import load_daily_payload
+
+    # Race-condition guard: the cron sync at 07:40 sometimes fires before the
+    # Oura ring has uploaded last night's sleep to the cloud. If today's saved
+    # payload is empty but the API now has data, refetch before invoking
+    # the LLM so the morning email isn't generated against zeros.
+    try:
+        today_iso = day.isoformat()
+        try:
+            current = load_daily_payload(config, today_iso)
+        except FileNotFoundError:
+            current = None
+        if current is None or not oura_data_is_fresh(current):
+            print(
+                "Oura payload for today is empty/missing — running a second "
+                "sync attempt before advisor (the Ring may have synced after the 07:40 cron)."
+            )
+            try:
+                run_oura_sync()
+            except Exception as resync_exc:
+                print(f"  resync failed (non-fatal): {resync_exc}")
+    except Exception as exc:
+        print(f"  freshness re-sync check skipped: {exc}")
 
     # Oura freshness short-circuit: if the last 3 days have no real sleep/HRV
     # data, skip the LLM call and send a "fix your ring" warning instead.

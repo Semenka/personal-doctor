@@ -259,6 +259,58 @@ def start_server():
                       id="weekly_retro", misfire_grace_time=7200)
     scheduler.start()
 
+    # Boot-time self-check: log loud warnings if WhatsApp delivery or Oura
+    # data are broken. Easier than digging through logs after a regression.
+    def _self_check() -> None:
+        import subprocess
+        # 1. WhatsApp dry-run (1s — does not actually send)
+        try:
+            r = subprocess.run(
+                ["openclaw", "message", "send", "--channel", "whatsapp",
+                 "--target", os.getenv("WHATSAPP_TARGET", "+393491913903"),
+                 "--message", "selfcheck", "--dry-run"],
+                capture_output=True, text=True, timeout=10, check=False,
+            )
+            if r.returncode != 0 or "Outbound not configured" in (r.stderr + r.stdout):
+                logger.warning(
+                    f"⚠️ Self-check: WhatsApp send is broken — "
+                    f"`launchctl kickstart -k gui/$UID/ai.openclaw.gateway` may fix it. "
+                    f"stderr={r.stderr.strip()[:200]}"
+                )
+            else:
+                logger.info("Self-check: WhatsApp delivery OK (dry-run)")
+        except FileNotFoundError:
+            logger.warning("Self-check: openclaw CLI not on PATH — WhatsApp will fail")
+        except Exception as exc:
+            logger.warning(f"Self-check: WhatsApp probe errored: {exc}")
+        # 2. Oura freshness (uses on-disk payload, no API call)
+        try:
+            from app.sync.pipeline import oura_data_is_fresh
+            from app.sync.storage import load_daily_payload
+            today_iso = datetime.now(tz=config.timezone).date().isoformat()
+            try:
+                p = load_daily_payload(config, today_iso)
+            except FileNotFoundError:
+                p = None
+            if p is None:
+                logger.info(f"Self-check: no Oura payload for {today_iso} yet (pre-08:00 sync window).")
+            elif not oura_data_is_fresh(p):
+                logger.warning(
+                    f"⚠️ Self-check: today's Oura payload is empty "
+                    f"(hrv={p.get('hrv',0)}, sleep_hours={p.get('sleep_hours',0)}). "
+                    "Ring may not have synced yet — advisor will retry before generating advice."
+                )
+            else:
+                logger.info(
+                    f"Self-check: Oura payload OK — hrv={p.get('hrv')}, "
+                    f"sleep={p.get('sleep_hours')}h, readiness={p.get('readiness_score')}."
+                )
+        except Exception as exc:
+            logger.warning(f"Self-check: Oura probe errored: {exc}")
+
+    import threading
+    threading.Thread(target=_self_check, daemon=True).start()
+
     # Catch up if today's advisor was missed (e.g., Mac just woke from sleep)
     today = datetime.now(tz=config.timezone).date()
     advice_file = config.data_dir / "advisor" / f"daily_advice_{today}.json"
