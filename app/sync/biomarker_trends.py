@@ -231,6 +231,29 @@ def summarize_for_advisor(
         m = BY_ID.get(t.marker_id)
         if not m:
             continue
+        # Source tag for the pill / prompt — the first citation is the
+        # authority behind the reference range (WHO 2021, Mach 2020 ESC,
+        # Travison 2017, etc.). Falls back to a neutral "lab ref" string.
+        ref_source = m.citations[0] if m.citations else "lab ref"
+
+        # Attach evidence-based corrective actions when the marker is
+        # flagged. Limited to 3 per marker so the email + WhatsApp don't
+        # bloat. Already in (Author Year) citation format that matches
+        # SYSTEM_PROMPT, so the LLM can quote them verbatim.
+        from .biomarker_interventions import get_interventions
+
+        ivs = get_interventions(t.marker_id, t.last_flagged, limit=3)
+        intervention_payload = [
+            {
+                "action": iv.action,
+                "mechanism": iv.mechanism,
+                "expected_effect": iv.expected_effect,
+                "citation": iv.citation,
+                "category": iv.category,
+            }
+            for iv in ivs
+        ]
+
         out.append({
             "id": t.marker_id,
             "name": m.name_en,
@@ -254,7 +277,9 @@ def summarize_for_advisor(
                 if (m.ref_low is not None or m.ref_high is not None)
                 else None
             ),
+            "ref_source": ref_source,
             "citations": m.citations[:2],
+            "interventions": intervention_payload,
         })
     return out
 

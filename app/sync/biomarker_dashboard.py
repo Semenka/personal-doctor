@@ -139,12 +139,17 @@ def _trend_arrow(direction: str) -> str:
 
 
 def _status_pill(marker: Biomarker, value: float, flagged: Optional[str]) -> str:
-    """Return an inline-HTML pill showing where this value sits vs reference + optimal."""
+    """Return an inline-HTML pill showing where this value sits vs reference + optimal.
+
+    Names the authority (e.g. "WHO 2021") so the user knows whether the
+    cut-off comes from a lab default or a clinical guideline.
+    """
+    source = marker.citations[0] if marker.citations else "lab ref"
     if flagged == "high":
-        text = f"Above reference (>{marker.ref_high} {marker.unit})"
+        text = f"Above {source} ({value:g} > {marker.ref_high} {marker.unit})"
         bg, fg = "#fee2e2", "#991b1b"
     elif flagged == "low":
-        text = f"Below reference (<{marker.ref_low} {marker.unit})"
+        text = f"Below {source} ({value:g} < {marker.ref_low} {marker.unit})"
         bg, fg = "#fee2e2", "#991b1b"
     elif flagged == "optimal":
         bits = []
@@ -162,6 +167,37 @@ def _status_pill(marker: Biomarker, value: float, flagged: Optional[str]) -> str
         f'<span style="display:inline-block;padding:2px 8px;border-radius:9999px;'
         f'background:{bg};color:{fg};font-size:11px;font-weight:600;'
         f'white-space:nowrap;">{text}</span>'
+    )
+
+
+def _intervention_block_html(interventions: List[Dict[str, Any]]) -> str:
+    """Render an amber 'How to improve' card under a flagged marker.
+
+    Empty string if no interventions. Each row is a tight bullet with the
+    action in bold, the expected effect in muted text, and the citation as
+    a small italic tag — designed to be skim-readable in email.
+    """
+    if not interventions:
+        return ""
+    rows = []
+    for iv in interventions[:3]:
+        rows.append(
+            '<li style="margin:3px 0;line-height:1.45;">'
+            f'<strong style="color:#1f2937;">{escape(iv["action"])}</strong>'
+            f' &mdash; <span style="color:#6b7280;">{escape(iv["expected_effect"])}</span>'
+            f' <span style="color:#92400e;font-style:italic;font-size:11px;">'
+            f'· {escape(iv["citation"])}</span>'
+            '</li>'
+        )
+    return (
+        '<div style="margin-top:10px;padding:8px 12px;background:#fef3c7;'
+        'border-left:3px solid #f59e0b;border-radius:4px;">'
+        '<div style="font-size:11px;font-weight:700;color:#92400e;'
+        'text-transform:uppercase;letter-spacing:0.5px;">'
+        '&#x2197; How to improve</div>'
+        '<ul style="margin:4px 0 0 0;padding-left:18px;font-size:12px;color:#1f2937;">'
+        + "".join(rows)
+        + '</ul></div>'
     )
 
 
@@ -224,6 +260,9 @@ def render_email_dashboard_html(config: SyncConfig, max_markers: int = 10) -> st
             f"{trend.pct_change:+.1f}%)</span>"
         )
 
+        # Pull interventions for flagged markers — they're in the rank dict.
+        interventions_html = _intervention_block_html(r.get("interventions", []))
+
         cards.append(
             '<div style="border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;'
             'background:#ffffff;margin-bottom:10px;">'
@@ -244,6 +283,8 @@ def render_email_dashboard_html(config: SyncConfig, max_markers: int = 10) -> st
             '</div>'
             # Reference annotation
             f'<div style="font-size:11px;color:#6b7280;margin-top:3px;">{ref_txt}</div>'
+            # Corrective-action block (only renders when interventions present)
+            f'{interventions_html}'
             '</div>'
         )
 
@@ -258,7 +299,8 @@ def render_email_dashboard_html(config: SyncConfig, max_markers: int = 10) -> st
         '<div style="font-size:12px;color:#6b7280;margin-bottom:10px;">'
         'Ranked by urgency — out-of-range first, then biggest moves. '
         'Light grey band on each chart = lab reference range, '
-        'light green band = research-backed optimal range.'
+        'light green band = research-backed optimal range. '
+        'Out-of-range cards include an evidence-cited "How to improve" panel.'
         '</div>' + "".join(cards)
         + '<div style="font-size:11px;color:#9ca3af;margin-top:8px;text-align:right;">'
         f'<a href="{config.server_url}/biomarkers" style="color:#2563eb;">'
@@ -292,25 +334,40 @@ def render_whatsapp_summary(
     if not keys:
         return ""
 
-    # Bucket each ≥2-reading marker by category
+    # Bucket each ≥2-reading marker by category. We track an "urgency rank"
+    # tuple per item so flagged-low/high values surface above purely-large-
+    # movers within a group — these are the cases that benefit most from
+    # surfacing the corrective-action line beneath.
     buckets: Dict[str, List[tuple]] = {label: [] for label in _BIOMARKER_GROUPS}
     for bid in keys:
         m = BY_ID.get(bid)
         t = compute_trend(config, bid)
         if not (m and t):
             continue
+        # Tier 0 = flagged out-of-range, tier 1 = everything else.
+        urgency_tier = 0 if t.last_flagged in ("low", "high") else 1
+        # Within tier: largest |%change| first.
+        rank = (urgency_tier, -abs(t.pct_change))
         for label, cats in _BIOMARKER_GROUPS.items():
             if m.category in cats:
-                buckets[label].append((abs(t.pct_change), m, t))
+                buckets[label].append((rank, m, t))
                 break
 
     out_lines = [f"📊 Biomarker dashboard — {sum(len(v) for v in buckets.values())} tracked"]
+    # Lazy import — avoid a hard dep cycle if interventions module is missing.
+    try:
+        from .biomarker_interventions import get_interventions
+    except Exception:
+        get_interventions = None  # type: ignore
+
     for label, items in buckets.items():
         if include_groups and label not in include_groups:
             continue
         if not items:
             continue
-        items.sort(key=lambda r: r[0], reverse=True)
+        # Ascending sort: rank tuples are (tier, -|pct|) so smallest tier
+        # AND largest |pct| float to the top in natural ascending order.
+        items.sort(key=lambda r: r[0])
         out_lines.append("")
         out_lines.append(label)
         for _, m, t in items[:per_group]:
@@ -322,6 +379,17 @@ def render_whatsapp_summary(
                 f"{arrow} {m.name_en} {t.first_value:g}→{t.last_value:g} "
                 f"{m.unit} ({t.pct_change:+.0f}%){flag}"
             )
+            # Single most-impactful corrective action under the flagged trend.
+            # Limit text to keep the WhatsApp message scannable on a phone.
+            if get_interventions and t.last_flagged in ("low", "high"):
+                ivs = get_interventions(t.marker_id, t.last_flagged, limit=1)
+                if ivs:
+                    iv = ivs[0]
+                    # Trim the action to ~80 chars to stay under one wrap on phones.
+                    short = iv.action
+                    if len(short) > 80:
+                        short = short[:77].rstrip() + "…"
+                    out_lines.append(f"   → {short} ({iv.citation})")
     return "\n".join(out_lines)
 
 
@@ -493,6 +561,24 @@ def render_full_html_page(config: SyncConfig) -> str:
             ref_txt = _ref_annotation(marker)
             last_pt = pts[-1]
             pill = _status_pill(marker, last_pt.value, last_pt.flagged)
+            # Pull evidence-cited corrective actions if this marker is flagged.
+            # The full page uses the same library as the email so behavior is
+            # consistent — no separate prose copy to drift.
+            try:
+                from .biomarker_interventions import get_interventions
+
+                iv_objs = get_interventions(bid, last_pt.flagged, limit=3)
+            except Exception:
+                iv_objs = []
+            iv_payload = [
+                {
+                    "action": iv.action,
+                    "expected_effect": iv.expected_effect,
+                    "citation": iv.citation,
+                }
+                for iv in iv_objs
+            ]
+            interventions_html = _intervention_block_html(iv_payload)
             latest_str = (
                 f'<span style="font-size:18px;font-weight:700;color:#111827;">'
                 f'{last_pt.value:g}</span> '
@@ -553,6 +639,8 @@ def render_full_html_page(config: SyncConfig) -> str:
                 f'{age_block}'
                 f'</div>'
                 f'{trend_str}'
+                # Corrective-action block — only when flagged
+                f'{interventions_html}'
                 f'</div>'
             )
         if cards:

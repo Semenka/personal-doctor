@@ -113,6 +113,41 @@ REGISTRY: List[Biomarker] = [
         aliases=["vitality", "vitalité", "live sperm"],
         short_label="Vit",
     ),
+    Biomarker(
+        id="sperm_leukocytes", name_en="Leukocytes in semen",
+        name_fr="Leucocytes",
+        unit="M/mL", category="semen", direction="lower_better",
+        ref_high=1.0, optimal_high=0.5,
+        citations=["WHO 2021 6th ed"],
+        aliases=[
+            "leukocytes", "leucocytes", "white blood cells",
+            "leukocytospermia", "wbc semen", "peroxidase positive",
+            "round cells", "globules blancs",
+        ],
+        short_label="WBC",
+    ),
+    Biomarker(
+        id="sperm_pH", name_en="Semen pH", name_fr="pH du sperme",
+        unit="", category="semen", direction="mid_optimal",
+        ref_low=7.2, ref_high=8.0, optimal_low=7.4, optimal_high=7.8,
+        citations=["WHO 2021 6th ed"],
+        aliases=["ph", "semen ph", "ph sperme", "ph du sperme"],
+        short_label="pH",
+    ),
+    Biomarker(
+        id="sperm_mar_test", name_en="MAR test (antisperm antibodies)",
+        name_fr="Test MAR (anticorps anti-spermatozoïdes)",
+        unit="%", category="semen", direction="lower_better",
+        ref_high=50.0, optimal_high=10.0,
+        citations=["WHO 2021 6th ed"],
+        aliases=[
+            "mar test", "mar igg", "mar iga",
+            "antisperm antibody", "antisperm antibodies",
+            "asab", "anticorps anti-spermatozoïdes",
+            "anticorps antispermatozoides",
+        ],
+        short_label="MAR",
+    ),
 
     # ── 🧪 Hormones (Travison 2017 for T ranges; Mulhall 2018 endocrine evaluation) ──
     Biomarker(

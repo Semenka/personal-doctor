@@ -417,18 +417,39 @@ def _build_prompt(context: Dict[str, Any]) -> str:
             "(e.g., 'your testosterone went from 540 to 612 ng/dL') so the "
             "patient sees the data, not just the recommendation.",
             "",
+            "**For any marker flagged [low] or [high], the suggested protocols "
+            "list below is an evidence-cited menu. Your Priority or Backup "
+            "action MUST be drawn from those protocols when applicable, and "
+            "the Why field MUST cite the same paper. If multiple markers point "
+            "to the same intervention (e.g. antioxidant stack helps both "
+            "motility and DFI), prefer that overlap.**",
+            "",
         ]
         for t in bm_trends:
             opt = t.get("optimal_range")
             opt_str = f" (optimal {opt[0]}–{opt[1]} {t['unit']})" if opt and any(opt) else ""
             flag_str = f" [**{t['last_flagged']}**]" if t.get("last_flagged") in ("low", "high") else ""
             cit = ", ".join(t.get("citations") or [])
+            ref_source = t.get("ref_source") or ""
+            ref_source_tag = f" — ref: {ref_source}" if ref_source else ""
             lines.append(
                 f"- **{t['name']}**: {t['first_value']:g} → {t['last_value']:g} "
                 f"{t['unit']} ({t['pct_change']:+.1f}% over {t['days_span']}d, "
                 f"{t['n_points']} readings, {t['direction']}){flag_str}{opt_str}"
                 + (f" — {cit}" if cit else "")
+                + ref_source_tag
             )
+            # When the marker is flagged, expose the evidence-cited menu of
+            # corrective actions. The system-prompt addendum above forces
+            # the LLM to pick from this list rather than freewheel.
+            interv = t.get("interventions") or []
+            if interv:
+                lines.append("  ↗ Suggested protocols (pick one for today's plan):")
+                for iv in interv:
+                    lines.append(
+                        f"    • {iv['action']} — {iv['expected_effect']} "
+                        f"[{iv['citation']}, {iv['category']}]"
+                    )
         sections.append("\n".join(lines))
 
     # ── Upcoming checkups (medical scheduling reminder) ──
