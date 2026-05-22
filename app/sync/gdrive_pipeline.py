@@ -67,6 +67,43 @@ def sync_drive_reports(
     processed_ids: List[str] = state.get("processed_ids", [])
 
     files = list_files_recursive(config)
+
+    # ── ALSO walk external folder IDs (blood + spermogram archives) ──
+    # The recurring cron used to only scan ``me/health``, so spermogrammes
+    # uploaded to a separate Drive folder were silently invisible. Reuse the
+    # ARCHIVES table defined in scripts/ingest_drive_folders.py as the single
+    # source of truth, so both the one-shot script and the daily cron stay
+    # in lockstep. The walk is best-effort — any failure (network, perms,
+    # missing folder) is logged and we keep going with the regular scan.
+    try:
+        from googleapiclient.errors import HttpError  # noqa: F401
+
+        from scripts.ingest_drive_folders import ARCHIVES, _walk_folder
+        from .connectors.gdrive import _build_service
+
+        service = _build_service(config)
+        for folder_id, default_kind, label in ARCHIVES:
+            try:
+                extras = _walk_folder(service, folder_id)
+            except Exception as walk_exc:
+                print(f"  external folder walk failed [{label}]: {walk_exc}")
+                continue
+            seen_in_main = {x.get("id") for x in files}
+            new_extras = 0
+            for x in extras:
+                if x.get("id") in seen_in_main:
+                    continue
+                # Tag with default_kind so the classifier treats every file
+                # under the spermogram folder as a sperm_test (even photos
+                # whose filename is just "IMG_xxxx.jpg").
+                x["_external_default_kind"] = default_kind
+                files.append(x)
+                new_extras += 1
+            if new_extras:
+                print(f"  external folder [{label}]: +{new_extras} file(s) added to scan")
+    except Exception as exc:
+        print(f"  external archive scan skipped: {exc}")
+
     results: List[Dict[str, Any]] = []
     tmp_dir = config.data_dir / "gdrive_tmp"
     tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -164,9 +201,21 @@ def sync_drive_reports(
             raw_text = extracted.get("text", "")
             metadata["pages"] = extracted.get("pages")
 
-        # Classify — subfolder name takes priority (e.g. me/health/genetic/)
+        # Classify — priority order:
+        # 1. explicit report_type_override (CLI flag)
+        # 2. external archive default_kind (file came from a tagged folder
+        #    like the spermogram archive — overrides filename guessing
+        #    because photos like "IMG_8497.jpg" otherwise fall through)
+        # 3. subfolder name under me/health (e.g. me/health/genetic/)
+        # 4. classify_report heuristic on filename + text
+        external_kind = f.get("_external_default_kind")
         subfolder_kind = f.get("subfolder_type")
-        kind = report_type_override or subfolder_kind or classify_report(name, raw_text)
+        kind = (
+            report_type_override
+            or external_kind
+            or subfolder_kind
+            or classify_report(name, raw_text)
+        )
         if kind is None:
             kind = "unclassified"
         metadata["kind"] = kind
