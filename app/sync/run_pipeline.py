@@ -93,18 +93,18 @@ def main() -> int:
     # ── Step 3: AI Daily Advisor ────────────────────────────────────
     print("[3/4] AI Daily Advisor (Gemini 3 Flash)...")
     advice = None
+    from .daily_advisor import (
+        advisor_has_credentials,
+        build_stale_oura_advice,
+        email_advice,
+        generate_daily_advice,
+        save_advice_local,
+        upload_advice_to_drive,
+    )
+
     if not advisor_has_credentials(config):
         print("  FAIL: Advisor API key not set for selected model.")
     else:
-        from .daily_advisor import (
-            advisor_has_credentials,
-            build_stale_oura_advice,
-            email_advice,
-            advisor_has_credentials,
-            generate_daily_advice,
-            save_advice_local,
-            upload_advice_to_drive,
-        )
         from .pipeline import check_oura_freshness
 
         # Oura freshness short-circuit — skip LLM on stale data
