@@ -630,36 +630,57 @@ ESR1/ESR2 (estrogen receptors), SHBG variants
 Always connect genetic findings to specific, actionable daily changes.
 
 ### Scientific evidence base (cite when relevant)
-Ground your recommendations in these highly-cited findings. Cite author/year when you use one.
+Ground your recommendations in these highly-cited 2015–2025 findings. Cite author/year when \
+you use one. The full canonical bibliography lives in app/sync/bibliography.py and is \
+shared with the dashboard cards — citations the user sees in their "How to improve" panel \
+match the ones below verbatim.
 
 **Reproductive health:**
 1. Scrotal temperature: heat exposure (hot baths, laptops on lap, tight underwear) reduces \
-sperm motility 20-40% within weeks (Mieusset & Bujan 1995; Jung & Schuppe 2007)
-2. CoQ10/Ubiquinol 200 mg/day: improves sperm motility ~26% and count over 12 weeks \
-(Safarinejad 2009, 2012)
+sperm motility 20-40% within weeks (Durairajanayagam 2014; Sharma 2013)
+2. CoQ10/Ubiquinol 200 mg/day: improves sperm motility and density (Salas-Huetos 2018 \
+Andrology systematic review; Safarinejad 2009 original RCT)
 3. Zinc 25-50 mg + Selenium 200 mcg/day: significant improvements in semen parameters \
-(Colagar et al. 2009; Scott et al. 1998)
-4. Short sleep (<6 h): reduces testosterone 10-15% (Leproult & Van Cauter 2011)
-5. Moderate exercise (3-5x/week, 30-45 min): improves sperm parameters; overtraining \
-(>90 min intense) impairs them (Vaamonde et al. 2012; Gaskins et al. 2015)
-6. Omega-3/DHA 1-2 g/day: improves sperm membrane integrity and motility (Safarinejad 2011)
-7. Methylfolate 400-800 mcg/day: reduces sperm DNA fragmentation \
-(Wong et al. 2002; Boxmeer et al. 2009)
+(Salas-Huetos 2018; Buhling & Grajecki 2014)
+4. Short sleep (<6 h): reduces testosterone 10-15% (Leproult & Van Cauter 2011 — still \
+canonical mechanism); meta-analysis of sleep and semen (Wang 2018)
+5. Moderate aerobic + resistance training 3-5x/week, 30-45 min: improves sperm parameters \
+in sedentary men (Hajizadeh Maleki 2018 RCT; Gaskins 2015 cohort)
+6. Omega-3/DHA 1.5-2 g/day: improves sperm membrane integrity and motility (Hosseini 2019 \
+RCT; Salas-Huetos 2019 PUFA review)
+7. Methylfolate 400-800 mcg/day: reduces sperm DNA fragmentation (Salas-Huetos 2018; \
+Wong 2002 original RCT)
 8. Vitamin D 2000-4000 IU/day: positively associated with testosterone and sperm motility \
-(Blomberg Jensen 2014; Pilz et al. 2011)
-9. Chronic stress / high cortisol: reduces sperm motility and concentration (Janevic et al. 2014)
-10. Antioxidant stack (NAC 600 mg + Selenium 200 mcg + Vitamin E 400 IU): \
-Cochrane review shows ~4x higher live birth rate (Tremellen 2008; Showell et al. 2014)
+(Pludowski 2018; Bouillon 2019 Endocrine Reviews; Pilz 2011 original RCT)
+9. Chronic stress / high cortisol: reduces sperm motility and concentration (Nargund 2015; \
+Ilacqua 2018)
+10. Antioxidant stack (NAC 600 mg + Selenium 200 mcg + Vitamin E 400 IU + Vit C 1 g): \
+Updated Cochrane review shows improved live-birth rate (Showell 2019 Cochrane)
+15. Sperm DNA fragmentation diagnostics and management consensus (Esteves 2021 Andrology; \
+Agarwal 2020) — varicocele is the single most reversible cause (Wang 2019 Fertil Steril)
+16. Diet & fertility umbrella systematic review (Salas-Huetos 2017 Hum Reprod Update) — \
+canonical anchor for nutrition counseling.
 
 **Daily energy:**
 11. Morning bright light (10 min within 30 min of waking): anchors cortisol awakening \
-response, improves alertness (Figueiro et al. 2017)
-12. Brief cold exposure (30-90 sec cold shower): elevates norepinephrine 200-300% for \
-1-2 hours (Shevchuk 2008)
+response, improves alertness (Figueiro 2017)
+12. Brief cold exposure (30-90 sec cold shower): RCT n=3018 showed reduced sickness \
+absence and improved energy (Buijze 2016 PLoS ONE; Shevchuk 2008 mechanism)
 13. Creatine monohydrate 3-5 g/day: improves cognitive performance especially under \
-sleep deprivation (Rae et al. 2003)
-14. Magnesium glycinate 400 mg before bed: improves sleep quality scores by ~17% \
-(Abbasi et al. 2012)
+sleep deprivation (Avgerinos 2018 systematic review; Roschel 2021 update)
+14. Magnesium glycinate 400 mg before bed: improves sleep quality (Boyle 2017 systematic \
+review; Abbasi 2012 original RCT)
+
+**Cardiovascular / lipids (for the patient's ITGB3 + 9p21 CV-risk profile):**
+17. LDL is causal for ASCVD (Ference 2017 EAS Mendelian randomization); each mmol/L \
+reduction in LDL drops events ~22% (CTT 2019)
+18. ApoB is the truer atherogenic particle count, target ApoB <80 primary / <65 secondary \
+prevention (Sniderman 2019; Mach 2020 ESC dyslipidaemia guideline)
+19. Lp(a) is genetically fixed but lifetime CVD risk-modifier; lever via aggressive \
+LDL/ApoB reduction (Kronenberg 2022 EAS consensus)
+20. Mediterranean diet primary prevention drops major CV events ~30% (Estruch 2018 \
+PREDIMED). Omega-3 EPA+DHA for hypertriglyceridemia (Skulas-Ray 2019 AHA).
+21. Residual inflammation independent of LDL is a lever (Ridker 2018 CANTOS Lancet).
 
 ### Volume & variation rules (CRITICAL — past attempts with 5 actions led to 0% completion)
 The patient's data shows they complete **2 actions max on a good day**. Stop overloading them.
@@ -894,7 +915,7 @@ def build_stale_oura_advice(day: date, freshness: Dict[str, Any]) -> Dict[str, A
         "3. If sync still fails, reconnect the ring under Settings → My Device.\n\n"
         "### If you have 2 minutes today\n"
         "- 10 min of morning daylight within 30 min of waking (Figueiro 2017).\n"
-        "- 30-second cold rinse at the end of your shower (Shevchuk 2008).\n\n"
+        "- 30-second cold rinse at the end of your shower (Buijze 2016 RCT).\n\n"
         "Tomorrow's plan will be fully personalized once data is flowing."
     )
     return {
