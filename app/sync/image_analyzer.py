@@ -14,12 +14,9 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from google import genai
-from google.genai import types
-
 from .config import SyncConfig
 
-DEFAULT_MODEL = "gemini-3.1-flash-lite-preview"
+DEFAULT_MODEL = "gpt-5.5"
 
 # Filename / MIME patterns that indicate a medical image
 IMAGE_MIMES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
@@ -88,49 +85,37 @@ def analyze_image(
     image_path: Path,
     filename: str | None = None,
 ) -> Dict[str, Any]:
-    """Send a local image to Gemini Vision for radiological analysis.
+    """Send a local image to the configured vision model for radiology.
 
     Returns a dict with the analysis text and metadata.
     """
-    if not config.google_api_key:
-        raise RuntimeError("GOOGLE_API_KEY is required for image analysis")
+    from .llm_client import generate_with_image as llm_generate_image
+    from .llm_client import has_credentials, provider_info
+
+    if not has_credentials():
+        raise RuntimeError(
+            f"LLM has no credentials for image analysis. "
+            f"provider_info={provider_info()}"
+        )
 
     fname = filename or image_path.name
-    image_bytes = image_path.read_bytes()
 
-    # Determine media type
-    suffix = image_path.suffix.lower()
-    media_types = {
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".png": "image/png",
-        ".gif": "image/gif",
-        ".webp": "image/webp",
-    }
-    media_type = media_types.get(suffix, "image/jpeg")
-
-    model = config.gemini_model or DEFAULT_MODEL
-    client = genai.Client(api_key=config.google_api_key)
-    response = client.models.generate_content(
-        model=model,
-        contents=[
-            types.Part.from_bytes(data=image_bytes, mime_type=media_type),
-            (
-                f"Please analyze this medical image.\n"
-                f"Filename: {fname}\n"
-                f"Look for any pathologies including but not limited to: "
-                f"cancer, tumours, ligament tears, meniscus damage, "
-                f"fractures, disc herniations, degenerative changes, "
-                f"effusions, and any other abnormalities."
-            ),
-        ],
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-            max_output_tokens=1500,
-        ),
+    user_text = (
+        f"Please analyze this medical image.\n"
+        f"Filename: {fname}\n"
+        f"Look for any pathologies including but not limited to: "
+        f"cancer, tumours, ligament tears, meniscus damage, "
+        f"fractures, disc herniations, degenerative changes, "
+        f"effusions, and any other abnormalities."
     )
 
-    analysis_text = response.text
+    analysis_text = llm_generate_image(
+        system=SYSTEM_PROMPT,
+        user=user_text,
+        image_path=image_path,
+        reasoning="medium",
+        timeout_s=420,
+    )
 
     # Extract severity from the analysis
     severity = "UNKNOWN"

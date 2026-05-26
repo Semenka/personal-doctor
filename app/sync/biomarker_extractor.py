@@ -259,14 +259,19 @@ def extract_biomarkers_via_gemini(
     source_file: Optional[str] = None,
     fallback_date: Optional[str] = None,
 ) -> List[BiomarkerReading]:
-    """Extract biomarker readings from raw lab text using Gemini."""
-    if not config.google_api_key or not raw_text or len(raw_text.strip()) < 80:
+    """Extract biomarker readings from raw lab text using the configured LLM.
+
+    Name kept for backwards compatibility — actual provider is determined
+    by ``llm_client`` (codex/gpt-5.5 by default).
+    """
+    if not raw_text or len(raw_text.strip()) < 80:
         return []
-    try:
-        from google import genai
-        from google.genai import types
-    except ImportError:
-        logger.warning("google-genai not installed; skipping biomarker extraction")
+
+    from .llm_client import generate as llm_generate
+    from .llm_client import has_credentials
+
+    if not has_credentials():
+        logger.warning("LLM has no credentials; skipping biomarker extraction")
         return []
 
     text_excerpt = raw_text[:8000]
@@ -276,25 +281,21 @@ def extract_biomarkers_via_gemini(
     prompt = (
         f"Source kind: {source_kind}\n"
         f"Source file: {source_file or '(unknown)'}\n\n"
-        f"Report text:\n{text_excerpt}"
+        f"Report text:\n{text_excerpt}\n\n"
+        "Respond with JSON only — no prose, no markdown fences."
     )
     system = _EXTRACT_SYSTEM.format(registry=_registry_summary_for_prompt())
 
     try:
-        client = genai.Client(api_key=config.google_api_key)
-        model = config.gemini_model or "gemini-3.1-flash-lite-preview"
-        response = client.models.generate_content(
-            model=model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=system,
-                max_output_tokens=2500,
-                response_mime_type="application/json",
-            ),
-        )
-        text = (response.text or "").strip()
+        text = llm_generate(
+            system=system,
+            user=prompt,
+            max_output_tokens=2500,
+            reasoning="low",
+            timeout_s=600,
+        ).strip()
     except Exception as exc:
-        logger.warning(f"Gemini extraction failed for {source_file}: {exc}")
+        logger.warning(f"LLM extraction failed for {source_file}: {exc}")
         return []
 
     # Parse JSON
@@ -478,24 +479,16 @@ def extract_biomarkers_via_vision(
     """
     from pathlib import Path as _Path
 
-    if not config.google_api_key:
-        return []
-    try:
-        from google import genai
-        from google.genai import types
-    except ImportError:
-        logger.warning("google-genai not installed; skipping vision extraction")
+    from .llm_client import generate_with_image as llm_generate_image
+    from .llm_client import has_credentials
+
+    if not has_credentials():
+        logger.warning("LLM has no credentials; skipping vision extraction")
         return []
 
     image_path = _Path(image_path)
     if not image_path.exists():
         return []
-    image_bytes = image_path.read_bytes()
-    suffix = image_path.suffix.lower()
-    media_type = {
-        ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-        ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp",
-    }.get(suffix, "image/jpeg")
 
     system = _EXTRACT_SYSTEM.format(registry=_registry_summary_for_prompt())
     user_text = (
@@ -504,25 +497,18 @@ def extract_biomarkers_via_vision(
         "This is a scanned image of a lab report (no text layer). Read the "
         "values directly from the image and extract every numeric biomarker "
         "you can match to the registry. If you see a date on the report, use "
-        "it as draw_date."
+        "it as draw_date.\n\n"
+        "Respond with JSON only — no prose, no markdown fences."
     )
 
     try:
-        client = genai.Client(api_key=config.google_api_key)
-        model = config.gemini_model or "gemini-3.1-flash-lite-preview"
-        response = client.models.generate_content(
-            model=model,
-            contents=[
-                types.Part.from_bytes(data=image_bytes, mime_type=media_type),
-                user_text,
-            ],
-            config=types.GenerateContentConfig(
-                system_instruction=system,
-                max_output_tokens=2500,
-                response_mime_type="application/json",
-            ),
-        )
-        text = (response.text or "").strip()
+        text = llm_generate_image(
+            system=system,
+            user=user_text,
+            image_path=image_path,
+            reasoning="medium",
+            timeout_s=360,
+        ).strip()
     except Exception as exc:
         logger.warning(f"Vision extraction failed for {source_file}: {exc}")
         return []

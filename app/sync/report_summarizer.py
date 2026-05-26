@@ -61,15 +61,15 @@ Be terse. Output JSON only. No prose. No markdown. No disclaimers.
 def summarize_report_text(
     config: SyncConfig, kind: str, raw_text: str, filename: str = ""
 ) -> Optional[Dict[str, Any]]:
-    """Summarize a report's text via Gemini. Returns None on failure."""
-    if not config.google_api_key or not raw_text or len(raw_text.strip()) < 80:
+    """Summarize a report's text via the configured LLM. None on failure."""
+    if not raw_text or len(raw_text.strip()) < 80:
         return None
 
-    try:
-        from google import genai
-        from google.genai import types
-    except ImportError:
-        logger.warning("google-genai not installed; skipping summarization")
+    from .llm_client import generate as llm_generate
+    from .llm_client import has_credentials
+
+    if not has_credentials():
+        logger.warning("LLM has no credentials; skipping summarization")
         return None
 
     # Truncate very long reports (genetic tests can be 50k+ chars)
@@ -81,24 +81,20 @@ def summarize_report_text(
     prompt = (
         f"Report type: {kind}\n"
         f"Filename: {filename}\n\n"
-        f"Report text:\n{text_excerpt}"
+        f"Report text:\n{text_excerpt}\n\n"
+        "Respond with JSON only — no prose, no markdown fences."
     )
 
     try:
-        client = genai.Client(api_key=config.google_api_key)
-        model = config.gemini_model or "gemini-3.1-flash-lite-preview"
-        response = client.models.generate_content(
-            model=model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=_SUMMARY_SYSTEM,
-                max_output_tokens=1200,
-                response_mime_type="application/json",
-            ),
+        text = llm_generate(
+            system=_SUMMARY_SYSTEM,
+            user=prompt,
+            max_output_tokens=1200,
+            reasoning="low",
+            timeout_s=600,
         )
-        text = response.text or ""
     except Exception as exc:
-        logger.warning(f"Gemini summarization failed for {filename}: {exc}")
+        logger.warning(f"LLM summarization failed for {filename}: {exc}")
         return None
 
     # Parse JSON response (Gemini sometimes wraps in ```json fences)
