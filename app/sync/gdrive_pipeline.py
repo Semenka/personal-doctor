@@ -298,6 +298,28 @@ def sync_drive_reports(
         if biomarker_alerts:
             _maybe_biomarker_push(config, name, kind, biomarker_alerts)
 
+        # On-arrival outcome intelligence (O3): if this report added new
+        # biomarker readings, compute the cross-test progress note and push
+        # the "since your last test" narrative — far more useful than a bare
+        # "new report detected." Only for the report kinds that feed markers.
+        if kind in (
+            "blood_test", "urine_test", "sperm_test",
+            "hormone_panel", "health_check",
+        ) and metadata.get("biomarker_count"):
+            try:
+                from .outcomes import build_progress, render_whatsapp_note
+                from .whatsapp_sender import _run_openclaw_send
+
+                # Restrict to the kind that just landed so the narrative
+                # leads with the relevant test.
+                progress = build_progress(config, kinds=[kind])
+                note = render_whatsapp_note(progress)
+                if note:
+                    _run_openclaw_send(note)
+                    print(f"  Sent on-arrival progress note for {name}")
+            except Exception as exc:
+                print(f"  on-arrival progress note failed for {name}: {exc}")
+
         processed_ids.append(file_id)
         results.append({
             "file": name,

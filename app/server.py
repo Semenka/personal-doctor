@@ -135,6 +135,13 @@ def create_app() -> FastAPI:
 
         return HTMLResponse(render_full_html_page(config))
 
+    # ── Outcomes: "since your last test" cross-test progress ──
+    @dashboard_app.get("/outcomes", response_class=HTMLResponse)
+    async def outcomes_view():
+        from app.sync.outcomes import render_outcomes_page
+
+        return HTMLResponse(render_outcomes_page(config))
+
     # ── Genetic analysis viewer ──
     @dashboard_app.get("/genetics")
     async def genetics_view():
@@ -228,9 +235,11 @@ def start_server():
     from app.sync.config import load_config
     from app.sync.scheduler import (
         run_anomaly_detector_job,
+        run_auto_credit_job,
         run_daily_advisor,
         run_gdrive_sync,
         run_oura_sync,
+        run_overdue_checkup_alert,
         run_research_sync,
         run_supplement_check_job,
         run_weekly_retro_job,
@@ -247,8 +256,12 @@ def start_server():
                       id="gdrive_daily", misfire_grace_time=3600)
     scheduler.add_job(run_oura_sync, "cron", hour=7, minute=40,
                       id="oura_daily", misfire_grace_time=3600)
+    scheduler.add_job(run_auto_credit_job, "cron", hour=7, minute=42,
+                      id="auto_credit_daily", misfire_grace_time=3600)
     scheduler.add_job(run_daily_advisor, "cron", hour=8, minute=0,
                       id="advisor_daily", misfire_grace_time=3600)
+    scheduler.add_job(run_overdue_checkup_alert, "cron", hour=8, minute=5,
+                      id="overdue_checkups", misfire_grace_time=3600)
     scheduler.add_job(run_anomaly_detector_job, "cron", hour=7, minute=41,
                       id="anomaly_daily", misfire_grace_time=3600)
     scheduler.add_job(run_supplement_check_job, "cron", hour=7, minute=45,

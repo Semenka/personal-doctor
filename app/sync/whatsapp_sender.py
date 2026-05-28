@@ -16,7 +16,8 @@ import logging
 import os
 import re
 import subprocess
-from typing import Any, Dict, List
+import time
+from typing import Any, Dict, List, Optional
 
 from .config import SyncConfig
 
@@ -24,58 +25,148 @@ logger = logging.getLogger("personal-doctor.whatsapp")
 
 # Default recipient (user's own WhatsApp, used self-chat mode in OpenClaw)
 DEFAULT_TARGET = os.getenv("WHATSAPP_TARGET", "+393491913903")
+# Telegram fallback target (chat id or @username); optional
+TELEGRAM_TARGET = os.getenv("TELEGRAM_TARGET", "")
 
 # Cap at WhatsApp's soft limit for a comfortable single message
 _MAX_MESSAGE_CHARS = 1500
 
+# Substrings in CLI errors that mean "the gateway lost its outbound handler"
+# and a kickstart is likely to fix it.
+_GATEWAY_HEAL_SIGNATURES = (
+    "outbound not configured",
+    "no active whatsapp web listener",
+    "protocol mismatch",
+    "gateway closed",
+    "gatewaytransporterror",
+)
+
+_gateway_healed_this_process = False
+
+
+def _openclaw_send_once(
+    message: str, target: str, channel: str = "whatsapp", timeout_s: int = 30,
+) -> tuple[bool, str]:
+    """One raw `openclaw message send`. Returns (ok, stderr_or_empty)."""
+    cmd = [
+        "openclaw", "message", "send",
+        "--channel", channel,
+        "--target", target,
+        "--message", message,
+    ]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout_s, check=False,
+        )
+    except FileNotFoundError:
+        return False, "openclaw CLI not found on PATH"
+    except subprocess.TimeoutExpired:
+        return False, f"timed out after {timeout_s}s"
+    except Exception as exc:
+        return False, str(exc)
+    if result.returncode != 0:
+        return False, (result.stderr or result.stdout or "").strip()[:400]
+    return True, ""
+
+
+def _kickstart_gateway() -> None:
+    """Bounce the OpenClaw gateway LaunchAgent to re-register the outbound handler."""
+    uid = os.getuid()
+    try:
+        subprocess.run(
+            ["launchctl", "kickstart", "-k", f"gui/{uid}/ai.openclaw.gateway"],
+            capture_output=True, text=True, timeout=20, check=False,
+        )
+        # Give it a few seconds to reconnect the WhatsApp channel.
+        time.sleep(8)
+    except Exception as exc:
+        logger.warning(f"gateway kickstart failed: {exc}")
+
 
 def _run_openclaw_send(message: str, target: str = DEFAULT_TARGET) -> bool:
-    """Invoke `openclaw message send` to deliver a raw WhatsApp message.
+    """Deliver a message with retry, gateway self-heal, and channel fallback.
 
-    Returns True on success, False on any error (subprocess, timeout, non-zero exit).
-    Errors are logged but never raised — WhatsApp is best-effort alongside email.
+    Order of attempts:
+      1. WhatsApp send.
+      2. If it failed with a gateway-handler signature, kickstart the gateway
+         once (per process) and retry WhatsApp.
+      3. If WhatsApp still fails, fall back to Telegram (if TELEGRAM_TARGET set).
+
+    Returns True if any channel accepted the message. Best-effort: never raises.
     """
+    global _gateway_healed_this_process
+
     if not message.strip():
         return False
     if len(message) > _MAX_MESSAGE_CHARS:
         message = message[: _MAX_MESSAGE_CHARS - 3] + "..."
 
-    cmd = [
-        "openclaw",
-        "message",
-        "send",
-        "--channel",
-        "whatsapp",
-        "--target",
-        target,
-        "--message",
-        message,
-    ]
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
-    except FileNotFoundError:
-        logger.warning("openclaw CLI not found on PATH — skipping WhatsApp send")
-        return False
-    except subprocess.TimeoutExpired:
-        logger.warning("openclaw message send timed out after 30s")
-        return False
-    except Exception as exc:
-        logger.warning(f"openclaw message send errored: {exc}")
-        return False
+    ok, err = _openclaw_send_once(message, target)
+    if ok:
+        return True
+    logger.warning(f"WhatsApp send failed: {err}")
 
-    if result.returncode != 0:
-        logger.warning(
-            f"openclaw message send exit={result.returncode} "
-            f"stderr={result.stderr.strip()[:300]}"
-        )
+    # Self-heal: if the gateway lost its outbound handler, kickstart + retry once.
+    if (not _gateway_healed_this_process
+            and any(sig in err.lower() for sig in _GATEWAY_HEAL_SIGNATURES)):
+        logger.warning("Gateway handler error — kickstarting OpenClaw gateway and retrying.")
+        _gateway_healed_this_process = True
+        _kickstart_gateway()
+        ok, err = _openclaw_send_once(message, target)
+        if ok:
+            logger.info("WhatsApp send succeeded after gateway kickstart.")
+            return True
+        logger.warning(f"WhatsApp send still failing post-kickstart: {err}")
+
+    # Fallback channel: Telegram (shows connected; separate transport).
+    if TELEGRAM_TARGET:
+        tg_ok, tg_err = _openclaw_send_once(message, TELEGRAM_TARGET, channel="telegram")
+        if tg_ok:
+            logger.info("Delivered via Telegram fallback.")
+            return True
+        logger.warning(f"Telegram fallback failed: {tg_err}")
+
+    return False
+
+
+def send_via_email_fallback(config: SyncConfig, subject: str, body: str) -> bool:
+    """Last-resort delivery: a plain email so a message is never silently dropped.
+
+    Used by callers that want a hard guarantee (e.g. the morning plan). Reuses
+    the SMTP path from email_sender.
+    """
+    if not (config.email_to and config.smtp_host):
         return False
-    return True
+    try:
+        from email.mime.text import MIMEText
+        import smtplib
+        import ssl
+
+        msg = MIMEText(body, "plain", "utf-8")
+        msg["Subject"] = subject
+        msg["From"] = config.smtp_user or f"health-advisor@{config.smtp_host}"
+        msg["To"] = config.email_to
+        port = config.smtp_port or 465
+        ctx = ssl.create_default_context()
+        if port == 465:
+            with smtplib.SMTP_SSL(config.smtp_host, port, context=ctx) as s:
+                if config.smtp_user and config.smtp_password:
+                    s.login(config.smtp_user, config.smtp_password)
+                s.sendmail(msg["From"], [config.email_to], msg.as_string())
+        else:
+            with smtplib.SMTP(config.smtp_host, port) as s:
+                s.ehlo()
+                if port != 25:
+                    s.starttls(context=ctx)
+                    s.ehlo()
+                if config.smtp_user and config.smtp_password:
+                    s.login(config.smtp_user, config.smtp_password)
+                s.sendmail(msg["From"], [config.email_to], msg.as_string())
+        logger.info("Delivered via email fallback.")
+        return True
+    except Exception as exc:
+        logger.warning(f"Email fallback failed: {exc}")
+        return False
 
 
 def _extract_priority_and_backup(advice_text: str) -> Dict[str, Any]:
@@ -178,6 +269,13 @@ def send_whatsapp_advice(config: SyncConfig, advice: Dict[str, Any]) -> bool:
     ok = _run_openclaw_send(message)
     if ok:
         logger.info(f"Sent WhatsApp advice for {day}")
+    else:
+        # Hard guarantee: the morning plan must reach the user somehow. The
+        # full plan also goes out by email separately, but this short-form
+        # fallback ensures the WhatsApp digest content isn't lost when both
+        # WhatsApp and Telegram are down.
+        if send_via_email_fallback(config, f"🩺 Daily Plan — {day}", message):
+            logger.info(f"Morning digest delivered via email fallback for {day}")
     return ok
 
 

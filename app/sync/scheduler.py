@@ -300,22 +300,88 @@ def run_daily_advisor() -> None:
         print(f"WhatsApp send failed (non-fatal): {exc}")
 
 
+def run_auto_credit_job() -> None:
+    """Auto-credit today's actions from Oura signals (07:42 + inside evening nudge)."""
+    from datetime import datetime
+
+    config = load_config()
+    day = datetime.now(tz=config.timezone).date().isoformat()
+    try:
+        from .auto_complete import auto_credit_actions
+
+        summary = auto_credit_actions(config, day)
+        if summary.get("credited"):
+            print(f"Auto-credited {len(summary['credited'])} action(s) from Oura.")
+    except Exception as exc:
+        print(f"Auto-credit failed (non-fatal): {exc}")
+
+
+def run_overdue_checkup_alert() -> None:
+    """08:05 — alert on overdue + imminent lab checkups (clears silent overdue items)."""
+    from datetime import datetime
+
+    config = load_config()
+    try:
+        from .checkup_schedule import upcoming_lab_visits
+        from .whatsapp_sender import _run_openclaw_send
+
+        overdue = upcoming_lab_visits(config, within_days=0)  # due or overdue
+        upcoming = upcoming_lab_visits(config, within_days=7)
+        # upcoming includes overdue; keep only the not-yet-due slice for the
+        # "coming up" section.
+        overdue_keys = {v.get("date") + (v.get("label") or "") for v in overdue}
+        soon = [
+            v for v in upcoming
+            if (v.get("date") + (v.get("label") or "")) not in overdue_keys
+        ]
+        if not overdue and not soon:
+            return
+        lines = ["🧪 Lab check-ups"]
+        for v in overdue:
+            slip = " · ".join(v.get("panels", [])[:4])
+            lines.append(f"⚠️ OVERDUE ({v['date']}): {v.get('label','')}")
+            if slip:
+                lines.append(f"   slip: {slip}")
+        for v in soon:
+            lines.append(f"📅 Due {v['date']}: {v.get('label','')}")
+        msg = "\n".join(lines)
+        _run_openclaw_send(msg)
+        print(f"Overdue checkup alert sent ({len(overdue)} overdue, {len(soon)} soon).")
+    except Exception as exc:
+        print(f"Overdue checkup alert failed (non-fatal): {exc}")
+
+
 def run_whatsapp_evening_nudge() -> None:
-    """21:00 WhatsApp nudge: if any of today's actions are still open, ping the user."""
+    """21:00 WhatsApp nudge: auto-credit from Oura first, then ping if still open."""
     from datetime import datetime
 
     config = load_config()
     day = datetime.now(tz=config.timezone).date()
     try:
         from .action_tracker import load_actions_with_sheets
-        from .whatsapp_sender import send_whatsapp_evening_nudge
+        from .auto_complete import auto_credit_actions, render_auto_credit_line
+        from .whatsapp_sender import _run_openclaw_send, send_whatsapp_evening_nudge
+
+        # First, sweep Oura one more time (evening data is more complete).
+        summary = auto_credit_actions(config, day.isoformat())
+        credit_line = render_auto_credit_line(summary)
 
         actions = load_actions_with_sheets(config, day.isoformat())
         if not actions:
             return  # nothing generated today (e.g., stale Oura)
         done_count = sum(1 for a in actions if a.get("done"))
+
         if done_count >= len(actions):
-            return  # everything already done, skip nudge
+            # All done (likely via auto-credit) — send a quiet confirmation.
+            if summary.get("credited"):
+                _run_openclaw_send(
+                    f"🌙 {day.isoformat()} — all actions credited.\n{credit_line}"
+                )
+            return
+
+        # Some still open: nudge, leading with what we auto-credited.
+        if credit_line:
+            _run_openclaw_send(f"🌙 {day.isoformat()}\n{credit_line}")
         send_whatsapp_evening_nudge(config, day.isoformat(), actions)
     except Exception as exc:
         print(f"Evening nudge failed (non-fatal): {exc}")

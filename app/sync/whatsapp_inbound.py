@@ -127,10 +127,17 @@ def _handle_move_to_evening(config: SyncConfig) -> str:
 
 # ── Free-text Q&A (I2) ──────────────────────────────────────────────────
 def _qa_answer(config: SyncConfig, day: str, question: str) -> str:
-    """Use Gemini with today's advice + Oura + action history as context."""
-    if not config.google_api_key:
-        return ("Q&A needs GOOGLE_API_KEY. For quick replies, use '1', '2', "
-                "'done', 'skip', or 'swap backup for X'.")
+    """Answer a free-text question with today's advice + Oura + action history.
+
+    Routes through llm_client (Codex GPT-5.5 by default) — no longer tied to
+    the revoked Gemini key.
+    """
+    from .llm_client import generate as llm_generate
+    from .llm_client import has_credentials
+
+    if not has_credentials():
+        return ("Q&A is offline (no LLM credentials). For quick replies use "
+                "'1', '2', 'done', 'skip', or 'swap backup for X'.")
 
     # Gather context: today's advice + Oura + action state
     advice_text = ""
@@ -170,22 +177,16 @@ def _qa_answer(config: SyncConfig, day: str, question: str) -> str:
         f"User question: {question}"
     )
     try:
-        from google import genai
-        from google.genai import types
-
-        client = genai.Client(api_key=config.google_api_key)
-        model = config.gemini_model or "gemini-3.1-flash-lite-preview"
-        response = client.models.generate_content(
-            model=model,
-            contents=user,
-            config=types.GenerateContentConfig(
-                system_instruction=system,
-                max_output_tokens=400,
-            ),
+        answer = llm_generate(
+            system=system,
+            user=user,
+            max_output_tokens=400,
+            reasoning="low",
+            timeout_s=180,
         )
-        return (response.text or "").strip() or "(no response from model)"
+        return answer.strip() or "(no response from model)"
     except Exception as exc:
-        logger.warning(f"Q&A Gemini call failed: {exc}")
+        logger.warning(f"Q&A LLM call failed: {exc}")
         return f"Q&A failed: {exc}"
 
 

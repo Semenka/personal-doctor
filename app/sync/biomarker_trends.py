@@ -200,6 +200,64 @@ def compute_trend(config: SyncConfig, marker_id: str) -> Optional[Trend]:
     )
 
 
+def prev_vs_new(config: SyncConfig, marker_id: str) -> Optional[Dict[str, Any]]:
+    """Compare the TWO most recent readings of a marker (not first→last).
+
+    Powers the "since your last test" outcome view: how did this marker move
+    between the previous test and the new one, and did it cross a WHO/optimal
+    boundary? Returns None if fewer than 2 readings exist.
+    """
+    pts = series(config, marker_id)
+    marker = BY_ID.get(marker_id)
+    if not marker or len(pts) < 2:
+        return None
+    prev, new = pts[-2], pts[-1]
+    delta = round(new.value - prev.value, 3)
+    pct = round(((new.value - prev.value) / prev.value) * 100, 1) if prev.value else 0.0
+    direction = _improving_with_values(marker, prev.value, new.value)
+
+    # WHO/ref status before vs after
+    def _status(flagged: Optional[str]) -> str:
+        if flagged in ("low", "high"):
+            return "out_of_range"
+        if flagged == "optimal":
+            return "optimal"
+        return "in_range"
+
+    prev_status = _status(prev.flagged)
+    new_status = _status(new.flagged)
+    status_change = ""
+    if prev_status != new_status:
+        status_change = f"{prev_status} → {new_status}"
+
+    return {
+        "id": marker_id,
+        "name": marker.name_en,
+        "category": marker.category,
+        "unit": marker.unit,
+        "prev_value": prev.value,
+        "prev_date": prev.date,
+        "new_value": new.value,
+        "new_date": new.date,
+        "delta": delta,
+        "pct_change": pct,
+        "direction": direction,
+        "prev_flagged": prev.flagged,
+        "new_flagged": new.flagged,
+        "status_change": status_change,
+        "ref_range": (
+            [marker.ref_low, marker.ref_high]
+            if (marker.ref_low is not None or marker.ref_high is not None) else None
+        ),
+        "optimal_range": (
+            [marker.optimal_low, marker.optimal_high]
+            if (marker.optimal_low is not None or marker.optimal_high is not None) else None
+        ),
+        "ref_source": marker.citations[0] if marker.citations else "lab ref",
+        "source_kind": new.source_kind,
+    }
+
+
 def summarize_for_advisor(
     config: SyncConfig, top_n: int = 6
 ) -> List[Dict[str, Any]]:

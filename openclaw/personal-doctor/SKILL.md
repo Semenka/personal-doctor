@@ -121,3 +121,52 @@ launchctl unload ~/Library/LaunchAgents/com.personal-doctor.plist && launchctl l
 tail -f ~/personal-doctor/logs/launchd-stdout.log
 tail -f ~/personal-doctor/logs/personal-doctor.log
 ```
+
+## Completion tracking: auto-credit from Oura (primary)
+
+Action completion is derived passively from Oura — no manual reply required.
+After the Oura sync (07:42) and again at the evening nudge (21:00),
+`auto_complete.auto_credit_actions()` inspects today's actions and:
+
+- **movement / walk / cardio** → credited if `steps ≥ 7000` or `active_minutes ≥ 25`
+- **sleep / bedtime** → credited if `sleep_hours ≥ 6.75`
+- **supplements / cold shower / daylight** → can't be sensed; left for optional
+  manual confirmation, never auto-failed.
+
+Credited actions are marked done with `source="oura_auto"` and feed the
+`action_effects` correlation engine, which powers the `/outcomes` "what moved
+your metrics" analysis.
+
+## Optional: route manual WhatsApp replies to the doctor agent
+
+By default WhatsApp inbound routes to the `main` OpenClaw agent (your general
+assistant). The personal-doctor reply handler (`/whatsapp/inbound`: "1", "2",
+"done", "skip", "why creatine?") only receives replies if you bind the
+WhatsApp channel to the personal-doctor agent **and** forward inbound text to
+the local webhook. Because rebinding would take WhatsApp away from your
+general assistant, this is left opt-in:
+
+```bash
+# Route WhatsApp inbound to the personal-doctor agent (replaces main binding)
+openclaw agents bind --agent personal-doctor --bind whatsapp:default
+
+# Revert to the general assistant
+openclaw agents bind --agent main --bind whatsapp:default
+```
+
+Auto-credit (above) is the recommended path and needs none of this.
+
+## Outcome intelligence
+
+- `GET /outcomes` — "since your last test" cross-test progress page
+- New lab/spermogram in Drive → on-arrival progress note pushed to WhatsApp
+  ("total motility 5% → 26% since last test, still below WHO 42%…")
+- Daily email shows the "📈 Since your last test" block when a report landed
+  in the last 7 days.
+
+## Delivery reliability
+
+`whatsapp_sender` now retries, self-heals the OpenClaw gateway on
+"outbound not configured" / "no listener" errors (auto-kickstart), falls back
+to Telegram (`TELEGRAM_TARGET` env), and finally to email — so the morning
+plan is never silently dropped.

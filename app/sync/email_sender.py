@@ -335,6 +335,28 @@ def send_advice_email(config: SyncConfig, advice: Dict[str, Any]) -> None:
     except Exception:
         biomarker_html = ""
 
+    # "Since your last test" outcome block — only when a report landed recently.
+    outcomes_html = ""
+    try:
+        from datetime import date as _date, timedelta as _td
+
+        from .outcomes import latest_progress, render_outcomes_email_block
+
+        prog = latest_progress(config)
+        if prog and prog.get("deltas"):
+            # Only show if the newest reading in the deltas is within 7 days.
+            newest = max(
+                (d.get("new_date", "") for d in prog["deltas"]), default=""
+            )
+            try:
+                fresh = _date.fromisoformat(newest) >= (_date.today() - _td(days=7))
+            except Exception:
+                fresh = False
+            if fresh:
+                outcomes_html = render_outcomes_email_block(prog)
+    except Exception:
+        outcomes_html = ""
+
     # Build execution dashboard (7-day history + effects)
     execution_dashboard_html = _build_execution_dashboard_html(config, day)
 
@@ -366,6 +388,7 @@ def send_advice_email(config: SyncConfig, advice: Dict[str, Any]) -> None:
     Oura data: {oura_badge} &bull; Lab reports: {lab_types}{scan_info} &bull; Model: {advice.get('model', 'N/A')}
   </div>
   {best_mover_html}
+  {outcomes_html}
   {html_body}
   {biomarker_html}
   {execution_dashboard_html}
