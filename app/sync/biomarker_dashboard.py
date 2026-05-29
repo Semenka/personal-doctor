@@ -372,11 +372,20 @@ def render_whatsapp_summary(
         out_lines.append(label)
         for _, m, t in items[:per_group]:
             arrow = {"improving": "⬆", "declining": "⬇", "stable": "⬌"}[t.direction]
+            # Green/red status dot — explicit "where am I vs reference":
+            #   🔴 out of range (low/high), 🟢 in research-optimal band,
+            #   🟡 in reference range but not optimal.
+            if t.last_flagged in ("low", "high"):
+                dot = "🔴"
+            elif t.last_flagged == "optimal":
+                dot = "🟢"
+            else:
+                dot = "🟡"
             flag = ""
             if t.last_flagged in ("low", "high"):
                 flag = f" ⚠️{t.last_flagged}"
             out_lines.append(
-                f"{arrow} {m.name_en} {t.first_value:g}→{t.last_value:g} "
+                f"{dot} {arrow} {m.name_en} {t.first_value:g}→{t.last_value:g} "
                 f"{m.unit} ({t.pct_change:+.0f}%){flag}"
             )
             # Single most-impactful corrective action under the flagged trend.
@@ -391,6 +400,63 @@ def render_whatsapp_summary(
                         short = short[:77].rstrip() + "…"
                     out_lines.append(f"   → {short} ({iv.citation})")
     return "\n".join(out_lines)
+
+
+def render_whatsapp_research(config: SyncConfig, day: str, limit: int = 3) -> str:
+    """Recent-papers section for the WhatsApp digest, green/red impact-coded.
+
+    Mirrors the email's "📚 Recent papers" block in plain text: a 🟢 dot +
+    expected-impact % for a beneficial paper-backed action, the goal, and a
+    short title. Empty string if no research for the day.
+    """
+    from datetime import date as _date
+
+    try:
+        from ..research.pipeline import load_research_for_day
+    except Exception:
+        return ""
+    try:
+        recs = load_research_for_day(config, _date.fromisoformat(day))
+    except Exception:
+        recs = []
+    if not recs:
+        return ""
+
+    goal_emoji = {
+        "sperm_motility": "🧬", "sperm_quality": "🧬", "testosterone": "🧪",
+        "energy": "⚡", "hrv": "❤️", "sleep": "😴",
+    }
+    lines = ["📚 Recent papers"]
+    for r in recs[:limit]:
+        impact = r.get("expected_impact_pct") or 0
+        dot = "🟢" if impact > 0 else "🟡"
+        ge = goal_emoji.get(r.get("goal", ""), "•")
+        action = r.get("action", "")
+        if len(action) > 70:
+            action = action[:67].rstrip() + "…"
+        imp = f"+{impact:.0f}%" if impact > 0 else "—"
+        lines.append(f"{dot} {ge} {imp} {action}")
+    return "\n".join(lines)
+
+
+def render_whatsapp_protocol(
+    actions: List[Dict[str, Any]],
+) -> str:
+    """Today's protocol (actions) with green/red completion status for WhatsApp.
+
+    🟢 done · 🔴 still open. Mirrors the email's action representation.
+    """
+    if not actions:
+        return ""
+    lines = ["📋 Today's protocol"]
+    for i, a in enumerate(actions, 1):
+        done = a.get("done")
+        dot = "🟢" if done else "🔴"
+        title = a.get("title", "?")
+        if len(title) > 60:
+            title = title[:57].rstrip() + "…"
+        lines.append(f"{dot} {i}. {title}")
+    return "\n".join(lines)
 
 
 # ─── Full /biomarkers page (one chart per marker, vs time and vs age) ───

@@ -28,8 +28,9 @@ DEFAULT_TARGET = os.getenv("WHATSAPP_TARGET", "+393491913903")
 # Telegram fallback target (chat id or @username); optional
 TELEGRAM_TARGET = os.getenv("TELEGRAM_TARGET", "")
 
-# Cap at WhatsApp's soft limit for a comfortable single message
-_MAX_MESSAGE_CHARS = 1500
+# WhatsApp hard limit is 4096 chars; leave headroom for the four dashboard
+# sections (biomarkers + protocol + papers + reply hint) the user wants.
+_MAX_MESSAGE_CHARS = 3800
 
 # Substrings in CLI errors that mean "the gateway lost its outbound handler"
 # and a kickstart is likely to fix it.
@@ -250,8 +251,9 @@ def send_whatsapp_advice(config: SyncConfig, advice: Dict[str, Any]) -> bool:
         trimmed = [w.split("—")[0].strip() for w in micro_wins]
         lines.append("⚡ Quick wins: " + " · ".join(trimmed))
 
-    # Biomarker dashboard — semen + hormones + blood/hema/vitamins,
-    # category-balanced so blood markers aren't drowned out by sperm swings.
+    # Biomarker dashboard — semen + hormones + blood/hema/vitamins, with
+    # 🟢/🔴/🟡 status dots. Category-balanced so blood markers aren't drowned
+    # out by sperm swings.
     try:
         from .biomarker_dashboard import render_whatsapp_summary
 
@@ -261,6 +263,30 @@ def send_whatsapp_advice(config: SyncConfig, advice: Dict[str, Any]) -> bool:
             lines.append(bm)
     except Exception as exc:
         logger.warning(f"biomarker WhatsApp summary failed: {exc}")
+
+    # Protocol (today's actions) with green/red completion status.
+    try:
+        from .action_tracker import load_actions_with_sheets
+        from .biomarker_dashboard import render_whatsapp_protocol
+
+        actions = load_actions_with_sheets(config, day)
+        proto = render_whatsapp_protocol(actions)
+        if proto:
+            lines.append("")
+            lines.append(proto)
+    except Exception as exc:
+        logger.warning(f"protocol WhatsApp block failed: {exc}")
+
+    # Recent papers — green/red impact-coded.
+    try:
+        from .biomarker_dashboard import render_whatsapp_research
+
+        papers = render_whatsapp_research(config, day)
+        if papers:
+            lines.append("")
+            lines.append(papers)
+    except Exception as exc:
+        logger.warning(f"papers WhatsApp block failed: {exc}")
 
     lines.append("")
     lines.append('Reply "1" for priority done, "2" for backup, "done" for both.')
