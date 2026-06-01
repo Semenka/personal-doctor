@@ -170,3 +170,37 @@ Auto-credit (above) is the recommended path and needs none of this.
 "outbound not configured" / "no listener" errors (auto-kickstart), falls back
 to Telegram (`TELEGRAM_TARGET` env), and finally to email — so the morning
 plan is never silently dropped.
+
+## Second wearable: Fitbit (side-by-side with Oura)
+
+A Fitbit is integrated via the Fitbit Web API (Health Connect on the phone has
+no server-readable cloud API). Oura stays the primary in `daily_<date>.json`;
+Fitbit is written to a parallel `fitbit_<date>.json`, and a comparison layer
+shows the two devices side by side in the advisor, email, and WhatsApp digest.
+
+### One-time setup
+1. Create a **Personal** app at https://dev.fitbit.com/apps/new
+   - OAuth 2.0 Application Type: **Personal** (gives all scopes for your own data)
+   - Callback URL: `http://localhost:8731/callback`
+2. Put the Client ID + Secret in `~/personal-doctor/.env`:
+   ```
+   FITBIT_CLIENT_ID=...
+   FITBIT_CLIENT_SECRET=...
+   ```
+3. Mint the first token (opens a browser consent page):
+   ```bash
+   cd ~/personal-doctor && .venv/bin/python -m scripts.fitbit_auth
+   ```
+   This writes `data/ingested/.fitbit_token.json`. From then on the daily
+   07:43 sync auto-refreshes (Fitbit access tokens expire every 8 h; the
+   refresh token rotates on each use and is persisted automatically).
+
+### What it pulls
+Steps, active minutes, sleep stages (deep/light/rem), resting HR, HRV (daily
+RMSSD), breathing rate, and **SpO2** (Fitbit-only — Oura doesn't expose it).
+
+### Side-by-side
+The daily email shows a "⌚ Device comparison" card; the WhatsApp digest shows
+compact `O 27 / F 31` lines. 🟢 = devices agree (within 12%), 🟡 = they diverge.
+Until the Fitbit credentials are set, the sync logs "no credentials" and the
+pipeline runs Oura-only (graceful — nothing else changes).

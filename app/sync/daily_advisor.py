@@ -160,6 +160,16 @@ def _gather_context(
     except Exception:
         context["biomarker_trends"] = []
 
+    # Two-wearable comparison block (Oura vs Fitbit) — only when Fitbit synced
+    try:
+        from .device_compare import render_compare_advisor_block
+
+        context["device_compare_block"] = render_compare_advisor_block(
+            config, day.isoformat()
+        )
+    except Exception:
+        context["device_compare_block"] = ""
+
     return context
 
 
@@ -248,6 +258,11 @@ def _build_prompt(context: Dict[str, Any]) -> str:
     sections = [oura_section, labs_section]
     if scans_section:
         sections.append(scans_section)
+
+    # ── Two-wearable comparison (Oura vs Fitbit) ──
+    cmp_block = context.get("device_compare_block")
+    if cmp_block:
+        sections.append(cmp_block)
 
     # ── 7-day trend section ──
     averages = context.get("rolling_averages", {})

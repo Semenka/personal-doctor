@@ -237,6 +237,7 @@ def start_server():
         run_anomaly_detector_job,
         run_auto_credit_job,
         run_daily_advisor,
+        run_fitbit_sync,
         run_gdrive_sync,
         run_oura_sync,
         run_overdue_checkup_alert,
@@ -256,6 +257,8 @@ def start_server():
                       id="gdrive_daily", misfire_grace_time=3600)
     scheduler.add_job(run_oura_sync, "cron", hour=7, minute=40,
                       id="oura_daily", misfire_grace_time=3600)
+    scheduler.add_job(run_fitbit_sync, "cron", hour=7, minute=43,
+                      id="fitbit_daily", misfire_grace_time=3600)
     scheduler.add_job(run_auto_credit_job, "cron", hour=7, minute=42,
                       id="auto_credit_daily", misfire_grace_time=3600)
     scheduler.add_job(run_daily_advisor, "cron", hour=8, minute=0,

@@ -288,6 +288,17 @@ def send_whatsapp_advice(config: SyncConfig, advice: Dict[str, Any]) -> bool:
     except Exception as exc:
         logger.warning(f"papers WhatsApp block failed: {exc}")
 
+    # Device comparison (Oura vs Fitbit) — only when both wearables synced.
+    try:
+        from .device_compare import render_compare_whatsapp
+
+        cmp_block = render_compare_whatsapp(config, day)
+        if cmp_block:
+            lines.append("")
+            lines.append(cmp_block)
+    except Exception as exc:
+        logger.warning(f"device-compare WhatsApp block failed: {exc}")
+
     lines.append("")
     lines.append('Reply "1" for priority done, "2" for backup, "done" for both.')
 

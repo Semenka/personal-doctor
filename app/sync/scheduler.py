@@ -23,6 +23,9 @@ def start_scheduler() -> None:
     # 07:40 — Oura Ring data sync
     scheduler.add_job(run_oura_sync, "cron", hour=7, minute=40,
                       id="oura_daily", misfire_grace_time=3600)
+    # 07:43 — Fitbit data sync (second wearable, side-by-side with Oura)
+    scheduler.add_job(run_fitbit_sync, "cron", hour=7, minute=43,
+                      id="fitbit_daily", misfire_grace_time=3600)
     # 08:00 — AI daily advisor (Gemini 3.1 Flash Lite): analyse Oura + reports → email
     scheduler.add_job(run_daily_advisor, "cron", hour=8, minute=0,
                       id="advisor_daily", misfire_grace_time=3600)
@@ -45,6 +48,7 @@ def start_scheduler() -> None:
         "  07:20  Research sync (PubMed + OpenAlex)\n"
         "  07:30  Google Drive health folder scan\n"
         "  07:40  Oura Ring data sync\n"
+        "  07:43  Fitbit data sync\n"
         "  07:41  Anomaly detector\n"
         "  07:45  Supplement inventory check\n"
         "  08:00  AI daily advisor → email + WhatsApp\n"
@@ -135,6 +139,47 @@ def run_oura_sync() -> None:
             print(f"Uploaded Oura data to Drive: me/health/{day.strftime('%Y/%m/%d')}/")
         except Exception as exc:
             print(f"Google Drive Oura upload failed: {exc}")
+
+
+def run_fitbit_sync() -> None:
+    """07:43 — pull the day's Fitbit data and write the parallel fitbit_<date>.json.
+
+    Mirrors run_oura_sync (retry 3× with backoff). Graceful no-op when Fitbit
+    credentials aren't configured yet, so the pipeline runs Oura-only.
+    """
+    from datetime import datetime
+
+    config = load_config()
+    try:
+        from .connectors.fitbit import has_credentials
+        from .pipeline import fitbit_data_is_fresh, load_fitbit_daily
+    except Exception as exc:
+        print(f"Fitbit connector import failed: {exc}")
+        return
+
+    if not has_credentials(config):
+        print("Skipping Fitbit sync: no Fitbit credentials configured.")
+        return
+
+    day = datetime.now(tz=config.timezone).date()
+    payload = None
+    for attempt in range(3):
+        try:
+            payload = load_fitbit_daily(config, day)
+            break
+        except Exception as exc:
+            wait = 2 ** attempt
+            print(f"Fitbit sync attempt {attempt + 1}/3 failed: {exc}")
+            if attempt < 2:
+                time.sleep(wait)
+
+    if payload is None:
+        print("Fitbit sync: all retries exhausted.")
+        return
+
+    target = write_daily_json(config.data_dir, day.isoformat(), payload, source="fitbit")
+    fresh = "fresh" if fitbit_data_is_fresh(payload) else "empty"
+    print(f"Saved {target} ({fresh})")
 
 
 def run_research_sync() -> None:

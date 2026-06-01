@@ -75,6 +75,7 @@ def oura_to_daily_payload(day: date, summary: Dict[str, Any]) -> Dict[str, Any]:
         "water_l": 0,
         "mood": 0,
         "stress": 0,
+        "spo2": 0,  # Oura doesn't expose SpO2 in the daily payload; Fitbit does.
         "source": "oura",
         "activity_is_previous_day": summary.get("activity_is_previous", False),
     }
@@ -83,6 +84,122 @@ def oura_to_daily_payload(day: date, summary: Dict[str, Any]) -> Dict[str, Any]:
 def load_oura_daily(config: SyncConfig, day: date) -> Dict[str, Any]:
     summary = fetch_daily_summary(config, day)
     return oura_to_daily_payload(day, summary)
+
+
+def fitbit_to_daily_payload(day: date, summary: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize the Fitbit Web API response into the shared 30-key schema.
+
+    Same keys as oura_to_daily_payload so dashboards/consumers can read it the
+    same way, with source="fitbit". Fields Fitbit doesn't provide map to 0.
+    Adds a real spo2 value (Fitbit-only).
+    """
+    activities = (summary.get("activities") or {}).get("summary", {}) or {}
+    sleep_doc = summary.get("sleep") or {}
+    heart_doc = summary.get("heart") or {}
+    hrv_doc = summary.get("hrv") or {}
+    br_doc = summary.get("br") or {}
+    spo2_doc = summary.get("spo2") or {}
+
+    # ── Sleep ──
+    # Fitbit /1.2 sleep: top-level "summary" has stage totals; main sleep log
+    # has minutesAsleep + efficiency.
+    sleep_summary = sleep_doc.get("summary", {}) or {}
+    stages = sleep_summary.get("stages", {}) or {}
+    deep_min = stages.get("deep") or 0
+    light_min = stages.get("light") or 0
+    rem_min = stages.get("rem") or 0
+    total_asleep_min = sleep_summary.get("totalMinutesAsleep") or 0
+    # Find the main sleep log for efficiency
+    efficiency = 0
+    for s in sleep_doc.get("sleep", []) or []:
+        if s.get("isMainSleep"):
+            efficiency = s.get("efficiency") or 0
+            if not total_asleep_min:
+                total_asleep_min = s.get("minutesAsleep") or 0
+            break
+
+    # ── Heart ──
+    resting_hr = 0
+    heart_list = heart_doc.get("activities-heart", []) or []
+    if heart_list:
+        resting_hr = (heart_list[0].get("value", {}) or {}).get("restingHeartRate") or 0
+
+    # ── HRV (daily RMSSD) ──
+    hrv_val = 0.0
+    hrv_list = hrv_doc.get("hrv", []) or []
+    if hrv_list:
+        hrv_val = (hrv_list[0].get("value", {}) or {}).get("dailyRmssd") or 0.0
+
+    # ── Breathing rate ──
+    avg_breath = 0.0
+    br_list = br_doc.get("br", []) or []
+    if br_list:
+        avg_breath = (br_list[0].get("value", {}) or {}).get("breathingRate") or 0.0
+
+    # ── SpO2 (daily average) ──
+    spo2_val = 0.0
+    if isinstance(spo2_doc, dict):
+        spo2_val = (spo2_doc.get("value", {}) or {}).get("avg") or 0.0
+    elif isinstance(spo2_doc, list) and spo2_doc:
+        spo2_val = (spo2_doc[0].get("value", {}) or {}).get("avg") or 0.0
+
+    # ── Activity ──
+    steps = activities.get("steps") or 0
+    active_minutes = (activities.get("fairlyActiveMinutes") or 0) + (
+        activities.get("veryActiveMinutes") or 0
+    )
+    calories = activities.get("caloriesOut") or 0
+    active_calories = activities.get("activityCalories") or 0
+    sedentary_min = activities.get("sedentaryMinutes") or 0
+
+    return {
+        "date": day.isoformat(),
+        "sleep_hours": round(total_asleep_min / 60, 2),
+        "sleep_quality": int(efficiency),  # efficiency as a sleep-quality proxy
+        "readiness_score": 0,  # Fitbit Daily Readiness is Premium-gated, not in std API
+        "activity_score": 0,
+        "steps": int(steps),
+        "active_minutes": int(active_minutes),
+        "resting_hr": int(resting_hr),
+        "avg_hr": 0.0,
+        "hrv": round(float(hrv_val), 1),
+        "avg_breath": round(float(avg_breath), 1),
+        "efficiency": int(efficiency),
+        "temp_deviation": 0.0,
+        "calories": int(calories),
+        "active_calories": int(active_calories),
+        "sitting_hours": round(sedentary_min / 60, 1),
+        "deep_sleep_min": int(deep_min),
+        "rem_sleep_min": int(rem_min),
+        "light_sleep_min": int(light_min),
+        "protein_g": 0,
+        "carbs_g": 0,
+        "fat_g": 0,
+        "water_l": 0,
+        "mood": 0,
+        "stress": 0,
+        "spo2": round(float(spo2_val), 1),
+        "source": "fitbit",
+        "activity_is_previous_day": False,
+    }
+
+
+def load_fitbit_daily(config: SyncConfig, day: date) -> Dict[str, Any]:
+    from .connectors.fitbit import fetch_daily_summary as fitbit_fetch
+
+    summary = fitbit_fetch(config, day)
+    return fitbit_to_daily_payload(day, summary)
+
+
+def fitbit_data_is_fresh(payload: Dict[str, Any]) -> bool:
+    """True if the Fitbit payload has real data (≥2 of the core signals non-zero)."""
+    signals = [
+        (payload.get("steps") or 0) > 0,
+        (payload.get("sleep_hours") or 0) > 0,
+        (payload.get("resting_hr") or 0) > 0,
+        (payload.get("hrv") or 0) > 0,
+    ]
+    return sum(signals) >= 2
 
 
 def oura_data_is_fresh(payload: Dict[str, Any]) -> bool:

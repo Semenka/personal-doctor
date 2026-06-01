@@ -445,6 +445,15 @@ def send_advice_email(config: SyncConfig, advice: Dict[str, Any]) -> None:
     except Exception:
         research_html = ""
 
+    # Device comparison (Oura vs Fitbit) — only renders when Fitbit synced
+    device_compare_html = ""
+    try:
+        from .device_compare import render_compare_email_html
+
+        device_compare_html = render_compare_email_html(config, day)
+    except Exception:
+        device_compare_html = ""
+
     # Build action tracking buttons
     action_buttons_html = _build_action_buttons_html(config, advice_text, day)
 
@@ -476,6 +485,7 @@ def send_advice_email(config: SyncConfig, advice: Dict[str, Any]) -> None:
   {outcomes_html}
   {html_body}
   {biomarker_html}
+  {device_compare_html}
   {execution_dashboard_html}
   {research_html}
   {action_buttons_html}

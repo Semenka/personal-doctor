@@ -27,9 +27,18 @@ class SyncConfig:
     smtp_port: int | None
     smtp_user: str | None
     smtp_password: str | None
+    # Fitbit Web API (second wearable, side-by-side with Oura)
+    fitbit_client_id: str | None = None
+    fitbit_client_secret: str | None = None
+    fitbit_access_token: str | None = None
+    fitbit_refresh_token: str | None = None
     gemini_model: str = "gemini-3.1-flash-lite-preview"
     server_url: str = "http://localhost:8000"
     oura_base_url: str = "https://api.ouraring.com/v2/usercollection"
+    fitbit_base_url: str = "https://api.fitbit.com"
+    # Where the rotated Fitbit OAuth token pair is persisted (tokens expire
+    # every 8h and the refresh token rotates on each use).
+    fitbit_token_path: str = "data/ingested/.fitbit_token.json"
 
 
 def load_config() -> SyncConfig:
@@ -48,6 +57,13 @@ def load_config() -> SyncConfig:
     smtp_password = os.getenv("SMTP_PASSWORD")
     server_url = os.getenv("SERVER_URL", "http://localhost:8000")
     gemini_model = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite-preview")
+    fitbit_client_id = os.getenv("FITBIT_CLIENT_ID")
+    fitbit_client_secret = os.getenv("FITBIT_CLIENT_SECRET")
+    fitbit_access_token = os.getenv("FITBIT_ACCESS_TOKEN")
+    fitbit_refresh_token = os.getenv("FITBIT_REFRESH_TOKEN")
+    fitbit_token_path = os.getenv(
+        "FITBIT_TOKEN_PATH", str(data_dir / ".fitbit_token.json")
+    )
     return SyncConfig(
         data_dir=data_dir,
         oura_access_token=token,
@@ -62,6 +78,11 @@ def load_config() -> SyncConfig:
         smtp_port=int(smtp_port_str) if smtp_port_str else 587,
         smtp_user=smtp_user,
         smtp_password=smtp_password,
+        fitbit_client_id=fitbit_client_id,
+        fitbit_client_secret=fitbit_client_secret,
+        fitbit_access_token=fitbit_access_token,
+        fitbit_refresh_token=fitbit_refresh_token,
         gemini_model=gemini_model,
         server_url=server_url.rstrip("/"),
+        fitbit_token_path=fitbit_token_path,
     )

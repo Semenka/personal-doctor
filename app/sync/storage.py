@@ -9,11 +9,32 @@ import psycopg
 from .config import SyncConfig
 
 
-def write_daily_json(data_dir: Path, date: str, payload: Dict[str, Any]) -> Path:
+def write_daily_json(
+    data_dir: Path, date: str, payload: Dict[str, Any], source: str = "oura"
+) -> Path:
+    """Write the daily wearable payload.
+
+    Oura (default) goes to ``daily_<date>.json`` so all existing consumers
+    keep reading it as the flat-key primary. A second wearable (Fitbit) is
+    written to a parallel ``<source>_<date>.json`` so the two devices live
+    side by side without colliding.
+    """
     data_dir.mkdir(parents=True, exist_ok=True)
-    target = data_dir / f"daily_{date}.json"
+    fname = f"daily_{date}.json" if source == "oura" else f"{source}_{date}.json"
+    target = data_dir / fname
     target.write_text(json.dumps(payload, indent=2, sort_keys=True))
     return target
+
+
+def load_wearable_payload_file(
+    data_dir: Path, date: str, source: str = "oura"
+) -> Dict[str, Any]:
+    """Load a wearable payload file by source (oura → daily_, else <source>_)."""
+    fname = f"daily_{date}.json" if source == "oura" else f"{source}_{date}.json"
+    target = data_dir / fname
+    if not target.exists():
+        raise FileNotFoundError(f"No {source} payload file found at {target}")
+    return json.loads(target.read_text())
 
 
 def write_lab_document_json(
