@@ -158,6 +158,9 @@ def fetch_daily_summary(config: SyncConfig, day: date) -> Dict[str, Any]:
     d = day.isoformat()
     out: Dict[str, Any] = {}
 
+    # All important bracelet metrics. Beyond the basics, Fitbit bands record
+    # Active Zone Minutes (their headline cardio metric), nightly skin-temp
+    # variation, VO2max/cardio fitness, and distance/floors — captured here.
     endpoints = {
         "activities": f"/1/user/-/activities/date/{d}.json",
         "sleep": f"/1.2/user/-/sleep/date/{d}.json",
@@ -165,6 +168,9 @@ def fetch_daily_summary(config: SyncConfig, day: date) -> Dict[str, Any]:
         "hrv": f"/1/user/-/hrv/date/{d}.json",
         "br": f"/1/user/-/br/date/{d}.json",
         "spo2": f"/1/user/-/spo2/date/{d}.json",
+        "azm": f"/1/user/-/activities/active-zone-minutes/date/{d}/1d.json",
+        "temp": f"/1/user/-/temp/skin/date/{d}.json",
+        "cardioscore": f"/1/user/-/cardioscore/date/{d}.json",
     }
     for key, path in endpoints.items():
         try:

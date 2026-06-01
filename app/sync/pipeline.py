@@ -76,6 +76,11 @@ def oura_to_daily_payload(day: date, summary: Dict[str, Any]) -> Dict[str, Any]:
         "mood": 0,
         "stress": 0,
         "spo2": 0,  # Oura doesn't expose SpO2 in the daily payload; Fitbit does.
+        # Fitbit-only metrics — kept at 0 in the Oura payload for schema parity.
+        "active_zone_minutes": 0,
+        "vo2max": 0.0,
+        "distance_km": 0.0,
+        "floors": 0,
         "source": "oura",
         "activity_is_previous_day": summary.get("activity_is_previous", False),
     }
@@ -99,6 +104,9 @@ def fitbit_to_daily_payload(day: date, summary: Dict[str, Any]) -> Dict[str, Any
     hrv_doc = summary.get("hrv") or {}
     br_doc = summary.get("br") or {}
     spo2_doc = summary.get("spo2") or {}
+    azm_doc = summary.get("azm") or {}
+    temp_doc = summary.get("temp") or {}
+    cardio_doc = summary.get("cardioscore") or {}
 
     # ── Sleep ──
     # Fitbit /1.2 sleep: top-level "summary" has stage totals; main sleep log
@@ -151,6 +159,37 @@ def fitbit_to_daily_payload(day: date, summary: Dict[str, Any]) -> Dict[str, Any
     calories = activities.get("caloriesOut") or 0
     active_calories = activities.get("activityCalories") or 0
     sedentary_min = activities.get("sedentaryMinutes") or 0
+    floors = activities.get("floors") or 0
+    # Total distance (sum the "total" distance entry if present)
+    distance_km = 0.0
+    for dist in activities.get("distances", []) or []:
+        if dist.get("activity") == "total":
+            distance_km = dist.get("distance") or 0.0
+            break
+
+    # ── Active Zone Minutes (Fitbit's headline cardio metric) ──
+    azm_total = 0
+    azm_list = azm_doc.get("activities-active-zone-minutes", []) or []
+    if azm_list:
+        azm_total = (azm_list[0].get("value", {}) or {}).get("activeZoneMinutes") or 0
+
+    # ── Skin temperature nightly variation (comparable to Oura temp_deviation) ──
+    skin_temp_dev = 0.0
+    temp_list = temp_doc.get("tempSkin", []) or []
+    if temp_list:
+        skin_temp_dev = (temp_list[0].get("value", {}) or {}).get("nightlyRelative") or 0.0
+
+    # ── VO2max / cardio fitness score ──
+    vo2max = 0.0
+    cardio_list = cardio_doc.get("cardioScore", []) or []
+    if cardio_list:
+        vo2 = (cardio_list[0].get("value", {}) or {}).get("vo2Max")
+        if isinstance(vo2, str):
+            # Fitbit sometimes returns a range like "42-46"; take the midpoint.
+            parts = [float(x) for x in vo2.replace("–", "-").split("-") if x.strip().replace(".", "").isdigit()]
+            vo2max = round(sum(parts) / len(parts), 1) if parts else 0.0
+        elif vo2 is not None:
+            vo2max = float(vo2)
 
     return {
         "date": day.isoformat(),
@@ -179,6 +218,11 @@ def fitbit_to_daily_payload(day: date, summary: Dict[str, Any]) -> Dict[str, Any
         "mood": 0,
         "stress": 0,
         "spo2": round(float(spo2_val), 1),
+        "temp_deviation": round(float(skin_temp_dev), 2),
+        "active_zone_minutes": int(azm_total),
+        "vo2max": float(vo2max),
+        "distance_km": round(float(distance_km), 2),
+        "floors": int(floors),
         "source": "fitbit",
         "activity_is_previous_day": False,
     }

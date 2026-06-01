@@ -27,7 +27,13 @@ _COMPARE_METRICS = [
     ("deep_sleep_min", "Deep sleep", "min", False),
     ("steps", "Steps", "", False),
     ("avg_breath", "Breathing rate", "/min", False),
+    ("temp_deviation", "Skin temp dev", "°C", False),
+    # Fitbit-only bracelet metrics:
     ("spo2", "SpO2", "%", True),
+    ("active_zone_minutes", "Active Zone Min", "", True),
+    ("vo2max", "VO2max / cardio", "", True),
+    ("distance_km", "Distance", "km", True),
+    ("floors", "Floors", "", True),
 ]
 
 
