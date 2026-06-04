@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -87,15 +88,66 @@ def has_credentials() -> bool:
     return False
 
 
+_CODEX_PATH_CACHE: Optional[str] = None
+
+
 def _codex_cli_path() -> Optional[str]:
-    """Return the codex CLI path if it's on PATH, else None."""
-    try:
-        result = subprocess.run(
-            ["which", "codex"], capture_output=True, text=True, timeout=2, check=False,
-        )
-        return result.stdout.strip() or None
-    except Exception:
-        return None
+    """Return an absolute path to the codex CLI, or None if not found.
+
+    A bare ``which codex`` is NOT enough: launchd gives the service a minimal
+    PATH (/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin) where codex
+    (installed via nvm / the Codex.app bundle) is invisible — which silently
+    disabled the daily advisor ("API key not set") for days. So we also honor
+    a CODEX_BIN override and probe the well-known install locations.
+    """
+    global _CODEX_PATH_CACHE
+    if _CODEX_PATH_CACHE and Path(_CODEX_PATH_CACHE).is_file():
+        return _CODEX_PATH_CACHE
+
+    candidates: list[str] = []
+    # 1) Explicit override wins.
+    if env := os.getenv("CODEX_BIN"):
+        candidates.append(env)
+    # 2) Anything already on PATH.
+    if found := shutil.which("codex"):
+        candidates.append(found)
+    # 3) Every nvm-installed node version (newest first).
+    nvm_root = Path.home() / ".nvm/versions/node"
+    if nvm_root.is_dir():
+        for c in sorted(nvm_root.glob("*/bin/codex"), reverse=True):
+            candidates.append(str(c))
+    # 4) Other known absolute locations.
+    candidates += [
+        "/Applications/Codex.app/Contents/Resources/codex",
+        "/opt/homebrew/bin/codex",
+        "/usr/local/bin/codex",
+        str(Path.home() / ".local/bin/codex"),
+    ]
+
+    for c in candidates:
+        if c and Path(c).is_file():
+            _CODEX_PATH_CACHE = c
+            return c
+    return None
+
+
+def _codex_exec_env() -> dict:
+    """Subprocess env for codex with node guaranteed on PATH.
+
+    The codex binary is a node script (#!/usr/bin/env node). Under launchd's
+    minimal PATH, node — installed alongside codex in the nvm bin dir — isn't
+    on PATH, so exec'ing codex by absolute path still fails. Prepend the codex
+    binary's own directory (which contains node) to PATH.
+    """
+    env = dict(os.environ)
+    codex = _codex_cli_path()
+    if codex:
+        bin_dir = str(Path(codex).resolve().parent)
+        # The resolved codex.js lives under lib/node_modules; node is in the
+        # symlink's directory, so prepend the *symlink* dir, not the realpath.
+        link_dir = str(Path(codex).parent)
+        env["PATH"] = f"{link_dir}:{bin_dir}:" + env.get("PATH", "")
+    return env
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -198,8 +250,11 @@ def _generate_codex(
         out_path = out_f.name
 
     try:
+        # Use the resolved absolute path so it works under launchd's minimal
+        # PATH (a bare "codex" wouldn't be found by the service).
+        codex_bin = _codex_cli_path() or "codex"
         cmd = [
-            "codex", "exec",
+            codex_bin, "exec",
             "--model", model,
             "-c", f"model_reasoning_effort={reasoning}",
             "--sandbox", "read-only",
@@ -215,6 +270,7 @@ def _generate_codex(
             proc = subprocess.run(
                 cmd, capture_output=True, text=True,
                 timeout=timeout_s, check=False,
+                env=_codex_exec_env(),  # node on PATH for the codex shebang
             )
         except subprocess.TimeoutExpired:
             raise RuntimeError(f"codex exec timed out after {timeout_s}s")

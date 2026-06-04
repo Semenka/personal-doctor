@@ -36,6 +36,39 @@ _COMPARE_METRICS = [
     ("floors", "Floors", "", True),
 ]
 
+# Per-metric AUTHORITATIVE source — which device to weight more when both
+# report a value. Grounded in device validation:
+#   - Oura ring: research-validated for overnight recovery — HRV (overnight
+#     RMSSD), sleep duration + staging, resting HR, body temperature. Finger
+#     PPG at rest is cleaner than wrist PPG.
+#   - Fitbit wrist: better for daytime movement — steps, Active Zone Minutes,
+#     distance, floors — and exposes SpO2 + VO2max that Oura's daily API doesn't.
+# Both are KEPT and shown; the preferred one is starred and is what blended
+# consumers use as the primary value.
+_METRIC_PREFERENCE: Dict[str, str] = {
+    "hrv": "oura",
+    "resting_hr": "oura",
+    "sleep_hours": "oura",
+    "deep_sleep_min": "oura",
+    "rem_sleep_min": "oura",
+    "light_sleep_min": "oura",
+    "readiness_score": "oura",
+    "temp_deviation": "oura",
+    "avg_breath": "oura",
+    "steps": "fitbit",
+    "active_minutes": "fitbit",
+    "active_zone_minutes": "fitbit",
+    "distance_km": "fitbit",
+    "floors": "fitbit",
+    "spo2": "fitbit",
+    "vo2max": "fitbit",
+}
+
+
+def preferred_source(metric: str) -> str:
+    """Authoritative device for a metric (defaults to Oura for overnight signals)."""
+    return _METRIC_PREFERENCE.get(metric, "oura")
+
 
 def _load(config: SyncConfig, day: str, source: str) -> Optional[Dict[str, Any]]:
     from .storage import load_wearable_payload_file
@@ -75,12 +108,35 @@ def compare_metrics(config: SyncConfig, day: str) -> List[Dict[str, Any]]:
             # "agree" within 12% of the larger value (loose device concordance)
             larger = max(abs(o_val), abs(f_val))
             agree = larger > 0 and abs(delta) <= 0.12 * larger
+        pref = preferred_source(key)
+        # The blended/primary value: the authoritative device's reading when
+        # present, else fall back to the other (keep both, weight the better).
+        if pref == "fitbit":
+            primary = f_val or o_val or None
+        else:
+            primary = o_val or f_val or None
         rows.append({
             "metric": key, "label": label, "unit": unit,
             "oura": o_val or None, "fitbit": f_val or None,
             "delta": delta, "agree": agree, "fitbit_only": fitbit_only,
+            "preferred": pref, "primary": primary,
         })
     return rows
+
+
+def blended_value(config: SyncConfig, day: str, metric: str) -> Optional[float]:
+    """Single best value for a metric: authoritative device, else the other.
+
+    Lets any consumer get one trustworthy number while both sources stay on
+    file. Used where a scalar is needed (e.g. trend continuity).
+    """
+    oura = _load(config, day, "oura") or {}
+    fitbit = _load(config, day, "fitbit") or {}
+    pref = preferred_source(metric)
+    primary, secondary = (
+        (fitbit, oura) if pref == "fitbit" else (oura, fitbit)
+    )
+    return primary.get(metric) or secondary.get(metric) or None
 
 
 def _fmt(v: Any, unit: str) -> str:
@@ -105,14 +161,17 @@ def render_compare_email_html(config: SyncConfig, day: str) -> str:
             dot = "🟡"
         else:
             dot = ""
+        # ★ marks the authoritative device we weight more for this metric.
+        o_star = " ★" if r["preferred"] == "oura" else ""
+        f_star = " ★" if r["preferred"] == "fitbit" else ""
         body += (
             '<tr>'
             f'<td style="padding:5px 10px;border-bottom:1px solid #eee;font-size:13px;">'
             f'{dot} {escape(r["label"])}</td>'
             f'<td style="padding:5px 10px;border-bottom:1px solid #eee;font-size:13px;'
-            f'text-align:right;">{_fmt(r["oura"], r["unit"])}</td>'
+            f'text-align:right;">{_fmt(r["oura"], r["unit"])}{o_star}</td>'
             f'<td style="padding:5px 10px;border-bottom:1px solid #eee;font-size:13px;'
-            f'text-align:right;">{_fmt(r["fitbit"], r["unit"])}</td>'
+            f'text-align:right;">{_fmt(r["fitbit"], r["unit"])}{f_star}</td>'
             '</tr>'
         )
     return (
@@ -121,7 +180,9 @@ def render_compare_email_html(config: SyncConfig, day: str) -> str:
         '<h3 style="color:#1e40af;margin:0 0 4px 0;font-size:16px;">'
         '&#x231A; Device comparison</h3>'
         '<div style="font-size:12px;color:#6b7280;margin-bottom:8px;">'
-        'Oura vs Fitbit for today. 🟢 devices agree · 🟡 they diverge.</div>'
+        'Oura vs Fitbit for today. 🟢 agree · 🟡 diverge. '
+        '★ = the device weighted more for that metric '
+        '(Oura for recovery/sleep, Fitbit for daytime activity + SpO2).</div>'
         '<table cellspacing="0" cellpadding="0" border="0" style="width:100%;">'
         '<tr><th style="text-align:left;font-size:12px;color:#64748b;padding:4px 10px;">Metric</th>'
         '<th style="text-align:right;font-size:12px;color:#64748b;padding:4px 10px;">Oura</th>'
@@ -135,7 +196,7 @@ def render_compare_whatsapp(config: SyncConfig, day: str) -> str:
     rows = compare_metrics(config, day)
     if not rows:
         return ""
-    lines = ["⌚ Oura vs Fitbit"]
+    lines = ["⌚ Oura vs Fitbit (★ = weighted more)"]
     for r in rows:
         if r["agree"] is True:
             dot = "🟢"
@@ -143,9 +204,12 @@ def render_compare_whatsapp(config: SyncConfig, day: str) -> str:
             dot = "🟡"
         else:
             dot = "▫️"
+        o_star = "★" if r["preferred"] == "oura" else ""
+        f_star = "★" if r["preferred"] == "fitbit" else ""
         lines.append(
             f"{dot} {r['label']}: "
-            f"O {_fmt(r['oura'], r['unit'])} / F {_fmt(r['fitbit'], r['unit'])}"
+            f"O {_fmt(r['oura'], r['unit'])}{o_star} / "
+            f"F {_fmt(r['fitbit'], r['unit'])}{f_star}"
         )
     return "\n".join(lines)
 
@@ -157,9 +221,14 @@ def render_compare_advisor_block(config: SyncConfig, day: str) -> str:
         return ""
     lines = [
         "## ⌚ Two-wearable comparison (Oura vs Fitbit, today)",
-        "Both devices are worn. Oura is more reliable for sleep staging + readiness; "
-        "Fitbit adds daytime SpO2 + steps. When they materially disagree on HRV or "
-        "resting HR, mention it briefly and lean toward Oura for recovery calls.",
+        "Both devices are worn. WEIGHTING: trust **Oura** for recovery/overnight "
+        "signals (HRV, sleep duration + staging, resting HR, body temperature, "
+        "breathing) — it's the validated standard there. Trust **Fitbit** for "
+        "daytime activity (steps, Active Zone Minutes, distance, floors) and for "
+        "SpO2 + VO2max, which Oura's daily API doesn't provide. The starred (★) "
+        "device below is the one to weight for each metric; when the two diverge "
+        "materially, base the recommendation on the starred source but you may "
+        "note the disagreement.",
         "",
     ]
     for r in rows:
@@ -168,8 +237,10 @@ def render_compare_advisor_block(config: SyncConfig, day: str) -> str:
             verdict = " (agree)"
         elif r["agree"] is False:
             verdict = " (diverge)"
+        o_star = " ★" if r["preferred"] == "oura" else ""
+        f_star = " ★" if r["preferred"] == "fitbit" else ""
         lines.append(
-            f"- {r['label']}: Oura {_fmt(r['oura'], r['unit'])} / "
-            f"Fitbit {_fmt(r['fitbit'], r['unit'])}{verdict}"
+            f"- {r['label']}: Oura {_fmt(r['oura'], r['unit'])}{o_star} / "
+            f"Fitbit {_fmt(r['fitbit'], r['unit'])}{f_star}{verdict}"
         )
     return "\n".join(lines)
