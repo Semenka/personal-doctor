@@ -235,6 +235,62 @@ def load_fitbit_daily(config: SyncConfig, day: date) -> Dict[str, Any]:
     return fitbit_to_daily_payload(day, summary)
 
 
+def google_health_to_daily_payload(day: date, gh: Dict[str, Any]) -> Dict[str, Any]:
+    """Map the Google Health (Fitness API) summary onto the standard schema.
+
+    The bracelet is still a Fitbit — only the transport changed (Fitbit's dev
+    portal closed to new apps; data now flows via Google). So ``source`` stays
+    "fitbit" and the file stays fitbit_<date>.json, keeping every dashboard
+    and the device-comparison layer working unchanged; ``via`` records the
+    actual transport. Google's Heart Points map to active_zone_minutes (same
+    concept: minutes in elevated heart-rate zones). HRV / VO2max / floors /
+    breathing aren't exposed by the public Fitness API → 0 (Oura is the
+    ★-weighted source for HRV regardless).
+    """
+    total_sleep_min = gh.get("sleep_total_min") or 0
+    return {
+        "date": day.isoformat(),
+        "sleep_hours": round(total_sleep_min / 60, 2),
+        "sleep_quality": 0,
+        "readiness_score": 0,
+        "activity_score": 0,
+        "steps": int(gh.get("steps") or 0),
+        "active_minutes": int(gh.get("active_minutes") or 0),
+        "resting_hr": int(gh.get("resting_hr") or 0),
+        "avg_hr": 0.0,
+        "hrv": 0.0,
+        "avg_breath": 0.0,
+        "efficiency": 0,
+        "temp_deviation": round(float(gh.get("body_temp") or 0), 2),
+        "calories": int(gh.get("calories") or 0),
+        "active_calories": 0,
+        "sitting_hours": 0.0,
+        "deep_sleep_min": int(gh.get("sleep_deep_min") or 0),
+        "rem_sleep_min": int(gh.get("sleep_rem_min") or 0),
+        "light_sleep_min": int(gh.get("sleep_light_min") or 0),
+        "protein_g": 0,
+        "carbs_g": 0,
+        "fat_g": 0,
+        "water_l": 0,
+        "mood": 0,
+        "stress": 0,
+        "spo2": round(float(gh.get("spo2") or 0), 1),
+        "active_zone_minutes": int(gh.get("heart_points") or 0),
+        "vo2max": 0.0,
+        "distance_km": round(float(gh.get("distance_km") or 0), 2),
+        "floors": 0,
+        "source": "fitbit",
+        "via": "google_health",
+        "activity_is_previous_day": False,
+    }
+
+
+def load_fitbit_via_google_health(config: SyncConfig, day: date) -> Dict[str, Any]:
+    from .connectors.google_health import fetch_daily_summary as gh_fetch
+
+    return google_health_to_daily_payload(day, gh_fetch(config, day))
+
+
 def fitbit_data_is_fresh(payload: Dict[str, Any]) -> bool:
     """True if the Fitbit payload has real data (≥2 of the core signals non-zero)."""
     signals = [

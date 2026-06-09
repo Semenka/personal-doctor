@@ -142,34 +142,60 @@ def run_oura_sync() -> None:
 
 
 def run_fitbit_sync() -> None:
-    """07:43 — pull the day's Fitbit data and write the parallel fitbit_<date>.json.
+    """07:43 — pull the day's Fitbit (bracelet) data into fitbit_<date>.json.
 
-    Mirrors run_oura_sync (retry 3× with backoff). Graceful no-op when Fitbit
-    credentials aren't configured yet, so the pipeline runs Oura-only.
+    Transport preference:
+      1. Google Health (Fitness API) — the current registration path; Fitbit's
+         standalone dev portal is closed to new apps. Uses the same Google
+         Cloud OAuth client as the Drive sync.
+      2. Legacy Fitbit Web API — only if its old token exists.
+      3. Neither configured → graceful no-op (Oura-only pipeline).
+    Mirrors run_oura_sync (retry 3× with backoff).
     """
     from datetime import datetime
 
     config = load_config()
+    loader = None
+    label = ""
     try:
-        from .connectors.fitbit import has_credentials
-        from .pipeline import fitbit_data_is_fresh, load_fitbit_daily
+        from .connectors.google_health import has_credentials as gh_has
+
+        if gh_has(config):
+            from .pipeline import load_fitbit_via_google_health
+
+            loader, label = load_fitbit_via_google_health, "google-health"
     except Exception as exc:
-        print(f"Fitbit connector import failed: {exc}")
+        print(f"Google Health connector unavailable: {exc}")
+
+    if loader is None:
+        try:
+            from .connectors.fitbit import has_credentials as fb_has
+
+            if fb_has(config):
+                from .pipeline import load_fitbit_daily
+
+                loader, label = load_fitbit_daily, "fitbit-web-api"
+        except Exception as exc:
+            print(f"Fitbit connector unavailable: {exc}")
+
+    if loader is None:
+        print(
+            "Skipping Fitbit sync: not authorized. Run "
+            ".venv/bin/python -m scripts.google_health_auth (one-time consent)."
+        )
         return
 
-    if not has_credentials(config):
-        print("Skipping Fitbit sync: no Fitbit credentials configured.")
-        return
+    from .pipeline import fitbit_data_is_fresh
 
     day = datetime.now(tz=config.timezone).date()
     payload = None
     for attempt in range(3):
         try:
-            payload = load_fitbit_daily(config, day)
+            payload = loader(config, day)
             break
         except Exception as exc:
             wait = 2 ** attempt
-            print(f"Fitbit sync attempt {attempt + 1}/3 failed: {exc}")
+            print(f"Fitbit sync ({label}) attempt {attempt + 1}/3 failed: {exc}")
             if attempt < 2:
                 time.sleep(wait)
 
@@ -179,7 +205,7 @@ def run_fitbit_sync() -> None:
 
     target = write_daily_json(config.data_dir, day.isoformat(), payload, source="fitbit")
     fresh = "fresh" if fitbit_data_is_fresh(payload) else "empty"
-    print(f"Saved {target} ({fresh})")
+    print(f"Saved {target} via {label} ({fresh})")
 
 
 def run_research_sync() -> None:

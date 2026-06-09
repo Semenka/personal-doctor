@@ -204,3 +204,26 @@ The daily email shows a "⌚ Device comparison" card; the WhatsApp digest shows
 compact `O 27 / F 31` lines. 🟢 = devices agree (within 12%), 🟡 = they diverge.
 Until the Fitbit credentials are set, the sync logs "no credentials" and the
 pipeline runs Oura-only (graceful — nothing else changes).
+
+## UPDATE: Fitbit auth now goes through Google Health (Fitness API)
+
+Fitbit's standalone portal (dev.fitbit.com) no longer accepts new app
+registrations — bracelet data flows through Google now. The integration
+reuses the SAME Google Cloud OAuth client as the Drive sync, so there is
+no new app to register. Setup is two steps:
+
+1. Enable the Fitness API on the existing project (one click):
+   https://console.cloud.google.com/apis/library/fitness.googleapis.com
+2. Authorize (same browser flow as the Drive setup):
+   ```bash
+   cd ~/personal-doctor && .venv/bin/python -m scripts.google_health_auth
+   ```
+   Token saved to `data/ingested/.google_health_token.json`; the 07:43
+   daily sync auto-refreshes it and prefers this transport automatically.
+
+Pulled via Google: steps, distance, calories, active minutes, Heart Points
+(mapped to Active Zone Minutes), resting HR (min-HR proxy), SpO2, body temp,
+sleep stages (deep/light/REM). Not exposed by the public Fitness API: HRV,
+VO2max, floors, breathing rate — Oura remains the ★ source for HRV/sleep
+staging regardless. The legacy Fitbit Web API path remains as a fallback if
+its token ever exists.
