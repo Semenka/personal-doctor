@@ -14,6 +14,10 @@ One-time setup:
      https://console.cloud.google.com/apis/library/fitness.googleapis.com
   2. Run:  .venv/bin/python -m scripts.google_health_auth
      (opens consent; token saved to data/ingested/.google_health_token.json)
+  3. Phone-side bridge (required): the Fitbit app writes to Health Connect,
+     which is ON-DEVICE only — install Health Sync (or the Google Fit app)
+     on the phone to relay Health Connect -> Google Fit cloud, or this API
+     returns zeros despite valid auth.
 
 What it pulls (daily aggregates / sessions):
   steps, distance, calories, active minutes, Heart Points (≈ Active Zone

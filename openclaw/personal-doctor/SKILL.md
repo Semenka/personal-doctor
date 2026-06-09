@@ -221,6 +221,15 @@ no new app to register. Setup is two steps:
    Token saved to `data/ingested/.google_health_token.json`; the 07:43
    daily sync auto-refreshes it and prefers this transport automatically.
 
+3. **Phone-side bridge (required!)** — the Fitbit app writes to Health
+   Connect, which stores data ON the phone only and never uploads to the
+   Google fitness cloud this API reads (verified 2026-06-10: cloud had no
+   data since May 2025 despite active devices). Install **Health Sync**
+   (Play Store) and set direction Health Connect → Google Fit, enabling
+   steps, heart rate, sleep, SpO2, activity. (Alternative: the Google Fit
+   app connected to Health Connect.) Without this bridge the API returns
+   zeros even though auth is complete.
+
 Pulled via Google: steps, distance, calories, active minutes, Heart Points
 (mapped to Active Zone Minutes), resting HR (min-HR proxy), SpO2, body temp,
 sleep stages (deep/light/REM). Not exposed by the public Fitness API: HRV,
