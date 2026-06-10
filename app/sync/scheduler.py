@@ -95,7 +95,7 @@ if __name__ == "__main__":
 
 
 def run_oura_sync() -> None:
-    from datetime import datetime
+    from datetime import datetime, timedelta
 
     config = load_config()
     day = datetime.now(tz=config.timezone).date()
@@ -104,6 +104,23 @@ def run_oura_sync() -> None:
         return
     if config.database_url:
         init_db(config)
+
+    # Backfill yesterday: the Ring may upload to Oura's cloud AFTER the
+    # morning cron, leaving a permanently-empty daily file unless re-fetched
+    # (observed 2026-06-09/10). Yesterday's data is final by now.
+    try:
+        yday = day - timedelta(days=1)
+        ypayload = load_oura_daily(config, yday)
+        from .pipeline import oura_data_is_fresh
+
+        if oura_data_is_fresh(ypayload):
+            if config.database_url:
+                save_daily_payload_db(config, ypayload)
+            else:
+                write_daily_json(config.data_dir, yday.isoformat(), ypayload)
+            print(f"Backfilled Oura {yday} (final numbers).")
+    except Exception as exc:
+        print(f"Oura yesterday-backfill skipped: {exc}")
 
     # Retry up to 3 times with backoff for transient network failures
     payload = None
@@ -185,9 +202,25 @@ def run_fitbit_sync() -> None:
         )
         return
 
+    from datetime import timedelta
+
     from .pipeline import fitbit_data_is_fresh
 
     day = datetime.now(tz=config.timezone).date()
+
+    # Backfill yesterday: at 07:43 the same-day pull only has last night's
+    # sleep + early steps; yesterday's daytime activity finalizes later (and
+    # the phone bridge may relay with hours of lag). Re-fetch so the stored
+    # file holds final numbers.
+    try:
+        yday = day - timedelta(days=1)
+        ypayload = loader(config, yday)
+        if fitbit_data_is_fresh(ypayload):
+            write_daily_json(config.data_dir, yday.isoformat(), ypayload, source="fitbit")
+            print(f"Backfilled Fitbit {yday} via {label} (final numbers).")
+    except Exception as exc:
+        print(f"Fitbit yesterday-backfill skipped: {exc}")
+
     payload = None
     for attempt in range(3):
         try:
