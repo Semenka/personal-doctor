@@ -39,6 +39,7 @@ logger = logging.getLogger("personal-doctor.auto_complete")
 # over-credit; the user can always manually confirm the rest.
 STEP_THRESHOLD = 7000          # steps in the day
 ACTIVE_MINUTES_THRESHOLD = 25  # medium+high activity minutes
+AZM_THRESHOLD = 25             # Fitbit Active Zone Minutes (~AHA 150/wk ÷ 6)
 SLEEP_HOURS_TARGET = 6.75      # hours of actual sleep
 
 
@@ -72,6 +73,40 @@ def _load_oura(data_dir: Path, day: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _load_fitbit(data_dir: Path, day: str) -> Optional[Dict[str, Any]]:
+    p = data_dir / f"fitbit_{day}.json"
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text())
+    except Exception:
+        return None
+
+
+def _merge_activity(
+    oura: Optional[Dict[str, Any]], fitbit: Optional[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Combine activity signals from both wearables, taking the strongest evidence.
+
+    Fitbit is the authoritative (★) daytime-activity source
+    (device_compare._METRIC_PREFERENCE: steps, active minutes, Active Zone
+    Minutes), but its same-day file lags — the Google-Health phone bridge often
+    only finalizes a day's activity in the *next morning's* backfill. So for
+    steps/active-minutes we take the MAX across both devices rather than
+    strictly preferring one, which avoids both an empty-Fitbit miss and an
+    absent-Oura miss. Active Zone Minutes is Fitbit-only. Sleep stays Oura-led
+    (validated for overnight).
+    """
+    o = oura or {}
+    f = fitbit or {}
+    return {
+        "steps": max(o.get("steps") or 0, f.get("steps") or 0),
+        "active_minutes": max(o.get("active_minutes") or 0, f.get("active_minutes") or 0),
+        "active_zone_minutes": f.get("active_zone_minutes") or 0,
+        "sleep_hours": o.get("sleep_hours") or f.get("sleep_hours") or 0,
+    }
+
+
 def _classify(title: str, description: str) -> str:
     """Return 'movement' | 'sleep' | 'unsensable' | 'unknown'."""
     blob = f"{title} {description}".lower()
@@ -86,18 +121,24 @@ def _classify(title: str, description: str) -> str:
     return "unknown"
 
 
-def _oura_confirms(category: str, oura: Dict[str, Any]) -> Tuple[bool, str]:
-    """Return (confirmed, evidence_string) for a sensing category."""
+def _activity_confirms(category: str, signals: Dict[str, Any]) -> Tuple[bool, str]:
+    """Return (confirmed, evidence_string) for a sensing category.
+
+    ``signals`` is the merged Oura+Fitbit activity dict from ``_merge_activity``.
+    """
     if category == "movement":
-        steps = oura.get("steps") or 0
-        active = oura.get("active_minutes") or 0
+        steps = signals.get("steps") or 0
+        active = signals.get("active_minutes") or 0
+        azm = signals.get("active_zone_minutes") or 0
         if steps >= STEP_THRESHOLD:
             return True, f"{int(steps):,} steps"
         if active >= ACTIVE_MINUTES_THRESHOLD:
             return True, f"{int(active)} active min"
-        return False, f"only {int(steps):,} steps / {int(active)} active min"
+        if azm >= AZM_THRESHOLD:
+            return True, f"{int(azm)} active-zone min"
+        return False, f"only {int(steps):,} steps / {int(active)} active min / {int(azm)} AZM"
     if category == "sleep":
-        hrs = oura.get("sleep_hours") or 0
+        hrs = signals.get("sleep_hours") or 0
         if hrs >= SLEEP_HOURS_TARGET:
             return True, f"{hrs:.1f} h sleep"
         return False, f"only {hrs:.1f} h sleep"
@@ -105,7 +146,11 @@ def _oura_confirms(category: str, oura: Dict[str, Any]) -> Tuple[bool, str]:
 
 
 def auto_credit_actions(config: SyncConfig, day: Optional[str] = None) -> Dict[str, Any]:
-    """Inspect today's actions, auto-credit the ones Oura confirms.
+    """Inspect a day's actions, auto-credit the ones the wearables confirm.
+
+    Senses activity from BOTH wearables (Oura + Fitbit) — Fitbit is the
+    authoritative daytime-activity source, and re-running this after the Fitbit
+    yesterday-backfill lands lets the lagged activity finally credit actions.
 
     Returns a summary:
       {credited: [{idx,title,evidence}], unsensable: [...], unmet: [...]}
@@ -123,9 +168,11 @@ def auto_credit_actions(config: SyncConfig, day: Optional[str] = None) -> Dict[s
         return result
 
     oura = _load_oura(config.data_dir, day)
-    if not oura:
-        logger.info(f"auto_credit: no Oura payload for {day} yet")
+    fitbit = _load_fitbit(config.data_dir, day)
+    if not oura and not fitbit:
+        logger.info(f"auto_credit: no wearable payload for {day} yet")
         return result
+    signals = _merge_activity(oura, fitbit)
 
     for a in actions:
         if a.get("done"):
@@ -138,7 +185,7 @@ def auto_credit_actions(config: SyncConfig, day: Optional[str] = None) -> Dict[s
             result["unsensable"].append({"idx": a["idx"], "title": title})
             continue
 
-        confirmed, evidence = _oura_confirms(category, oura)
+        confirmed, evidence = _activity_confirms(category, signals)
         if confirmed:
             ok = mark_action_done_with_sheets(config, day, a["idx"])
             # Tag the source on the local JSON so adherence analytics can

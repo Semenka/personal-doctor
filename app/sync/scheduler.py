@@ -218,6 +218,21 @@ def run_fitbit_sync() -> None:
         if fitbit_data_is_fresh(ypayload):
             write_daily_json(config.data_dir, yday.isoformat(), ypayload, source="fitbit")
             print(f"Backfilled Fitbit {yday} via {label} (final numbers).")
+            # Yesterday's Fitbit activity (steps/AZM) often only finalizes now,
+            # after same-day auto-credit already ran and missed it. Re-credit
+            # yesterday against the freshly-backfilled activity so movement
+            # actions get their adherence signal.
+            try:
+                from .auto_complete import auto_credit_actions
+
+                summary = auto_credit_actions(config, yday.isoformat())
+                if summary.get("credited"):
+                    print(
+                        f"Re-credited {len(summary['credited'])} action(s) for "
+                        f"{yday} from backfilled Fitbit activity."
+                    )
+            except Exception as exc:
+                print(f"Fitbit backfill re-credit skipped: {exc}")
     except Exception as exc:
         print(f"Fitbit yesterday-backfill skipped: {exc}")
 
