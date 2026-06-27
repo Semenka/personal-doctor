@@ -158,6 +158,70 @@ def run_oura_sync() -> None:
             print(f"Google Drive Oura upload failed: {exc}")
 
 
+def _looks_like_auth_failure(detail: str) -> bool:
+    """True when an error string signals a dead/expired OAuth grant."""
+    d = (detail or "").lower()
+    return any(
+        s in d
+        for s in (
+            "invalid_grant",
+            "token has been expired",
+            "revoked",
+            "invalid_token",
+            "unauthorized",
+            "invalid credentials",
+            "401",
+        )
+    )
+
+
+def _alert_fitbit_auth_failure(config, detail: str) -> None:
+    """Surface a dead Google Health token to the user (throttled to 1×/day).
+
+    Without this the 07:43 sync fails silently — a token death once went
+    unnoticed for 12 days. Google expires refresh tokens after 7 days while
+    the OAuth app is in "Testing" publishing status, so this recurs until the
+    consent screen is published to Production.
+    """
+    import json as _json
+    from datetime import datetime
+
+    marker = config.data_dir / ".fitbit_auth_alert.json"
+    today = datetime.now(tz=config.timezone).date().isoformat()
+    try:
+        if marker.exists():
+            last = _json.loads(marker.read_text()).get("date")
+            if last == today:
+                return  # already alerted today
+    except Exception:
+        pass
+
+    msg = (
+        "⚠️ Fitbit Air sync is DOWN — Google Health token expired.\n\n"
+        f"The 07:43 daily sync can't pull bracelet data: {detail[:140]}\n\n"
+        "Two-step fix (Oura keeps working meanwhile):\n"
+        "1) PERMANENT — publish the OAuth app so the token stops dying every "
+        "7 days:\n"
+        "   console.cloud.google.com/auth/audience → 'PUBLISH APP' "
+        "(Testing → Production).\n"
+        "2) Re-authorize once (on the Mac Mini):\n"
+        "   cd ~/personal-doctor && .venv/bin/python -m scripts.google_health_auth\n\n"
+        "After step 1 you won't need to repeat step 2."
+    )
+    try:
+        from .whatsapp_sender import _run_openclaw_send
+
+        sent = _run_openclaw_send(msg)
+        print(f"Fitbit auth-failure alert sent: {sent}")
+    except Exception as exc:
+        print(f"Fitbit auth-failure alert could not be sent: {exc}")
+
+    try:
+        marker.write_text(_json.dumps({"date": today, "detail": detail[:200]}))
+    except Exception:
+        pass
+
+
 def run_fitbit_sync() -> None:
     """07:43 — pull the day's Fitbit (bracelet) data into fitbit_<date>.json.
 
@@ -237,11 +301,13 @@ def run_fitbit_sync() -> None:
         print(f"Fitbit yesterday-backfill skipped: {exc}")
 
     payload = None
+    last_error = ""
     for attempt in range(3):
         try:
             payload = loader(config, day)
             break
         except Exception as exc:
+            last_error = str(exc)
             wait = 2 ** attempt
             print(f"Fitbit sync ({label}) attempt {attempt + 1}/3 failed: {exc}")
             if attempt < 2:
@@ -249,11 +315,23 @@ def run_fitbit_sync() -> None:
 
     if payload is None:
         print("Fitbit sync: all retries exhausted.")
+        # A dead OAuth grant fails every day until re-authorized — alert the
+        # user (throttled) instead of failing silently for weeks.
+        if _looks_like_auth_failure(last_error):
+            _alert_fitbit_auth_failure(config, last_error)
         return
 
     target = write_daily_json(config.data_dir, day.isoformat(), payload, source="fitbit")
     fresh = "fresh" if fitbit_data_is_fresh(payload) else "empty"
     print(f"Saved {target} via {label} ({fresh})")
+    # Sync succeeded — clear any stale auth-failure marker so a future
+    # failure alerts again immediately.
+    try:
+        marker = config.data_dir / ".fitbit_auth_alert.json"
+        if marker.exists():
+            marker.unlink()
+    except Exception:
+        pass
 
 
 def run_research_sync() -> None:
