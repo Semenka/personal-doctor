@@ -9,6 +9,22 @@ from .config import load_config
 from .pipeline import load_oura_daily
 from .storage import init_db, save_daily_payload_db, write_daily_json
 
+# How many past days each morning sync re-fetches to catch late wearable
+# uploads (Oura/Fitbit can land >1 day after the night they cover).
+BACKFILL_DAYS = 3
+
+
+def _load_stored_daily(config, day_iso: str, source: str = "oura"):
+    """Best-effort read of an already-stored daily payload (None if absent)."""
+    from .storage import load_wearable_payload_file
+
+    try:
+        return load_wearable_payload_file(config.data_dir, day_iso, source=source)
+    except FileNotFoundError:
+        return None
+    except Exception:
+        return None
+
 
 def start_scheduler() -> None:
     config = load_config()
@@ -105,22 +121,29 @@ def run_oura_sync() -> None:
     if config.database_url:
         init_db(config)
 
-    # Backfill yesterday: the Ring may upload to Oura's cloud AFTER the
-    # morning cron, leaving a permanently-empty daily file unless re-fetched
-    # (observed 2026-06-09/10). Yesterday's data is final by now.
-    try:
-        yday = day - timedelta(days=1)
-        ypayload = load_oura_daily(config, yday)
-        from .pipeline import oura_data_is_fresh
+    # Backfill the last few days: the Ring may upload to Oura's cloud AFTER
+    # the morning cron — sometimes more than a day late (observed 2026-06-22,
+    # which only landed by 06-24). A 1-day window misses those, leaving a
+    # permanently-empty daily file. Re-fetch the last BACKFILL_DAYS and
+    # overwrite any stored file that is still stale.
+    from .pipeline import oura_data_is_fresh
 
-        if oura_data_is_fresh(ypayload):
-            if config.database_url:
-                save_daily_payload_db(config, ypayload)
-            else:
-                write_daily_json(config.data_dir, yday.isoformat(), ypayload)
-            print(f"Backfilled Oura {yday} (final numbers).")
-    except Exception as exc:
-        print(f"Oura yesterday-backfill skipped: {exc}")
+    for back in range(1, BACKFILL_DAYS + 1):
+        bday = day - timedelta(days=back)
+        try:
+            # Skip if the stored file is already fresh — avoid needless API calls.
+            existing = _load_stored_daily(config, bday.isoformat())
+            if existing and oura_data_is_fresh(existing):
+                continue
+            bpayload = load_oura_daily(config, bday)
+            if oura_data_is_fresh(bpayload):
+                if config.database_url:
+                    save_daily_payload_db(config, bpayload)
+                else:
+                    write_daily_json(config.data_dir, bday.isoformat(), bpayload)
+                print(f"Backfilled Oura {bday} (late upload recovered).")
+        except Exception as exc:
+            print(f"Oura backfill {bday} skipped: {exc}")
 
     # Retry up to 3 times with backoff for transient network failures
     payload = None
@@ -272,33 +295,38 @@ def run_fitbit_sync() -> None:
 
     day = datetime.now(tz=config.timezone).date()
 
-    # Backfill yesterday: at 07:43 the same-day pull only has last night's
-    # sleep + early steps; yesterday's daytime activity finalizes later (and
-    # the phone bridge may relay with hours of lag). Re-fetch so the stored
-    # file holds final numbers.
-    try:
-        yday = day - timedelta(days=1)
-        ypayload = loader(config, yday)
-        if fitbit_data_is_fresh(ypayload):
-            write_daily_json(config.data_dir, yday.isoformat(), ypayload, source="fitbit")
-            print(f"Backfilled Fitbit {yday} via {label} (final numbers).")
-            # Yesterday's Fitbit activity (steps/AZM) often only finalizes now,
-            # after same-day auto-credit already ran and missed it. Re-credit
-            # yesterday against the freshly-backfilled activity so movement
+    # Backfill the last few days: at 07:43 the same-day pull only has last
+    # night's sleep + early steps; daytime activity finalizes later and the
+    # phone bridge can relay with >1 day of lag. Re-fetch the last
+    # BACKFILL_DAYS so stored files hold final numbers and late uploads are
+    # never lost. Skip days already stored fresh to save API calls.
+    for back in range(1, BACKFILL_DAYS + 1):
+        bday = day - timedelta(days=back)
+        try:
+            existing = _load_stored_daily(config, bday.isoformat(), source="fitbit")
+            if existing and fitbit_data_is_fresh(existing):
+                continue
+            bpayload = loader(config, bday)
+            if not fitbit_data_is_fresh(bpayload):
+                continue
+            write_daily_json(config.data_dir, bday.isoformat(), bpayload, source="fitbit")
+            print(f"Backfilled Fitbit {bday} via {label} (late upload recovered).")
+            # Backfilled activity (steps/AZM) often finalizes after same-day
+            # auto-credit already ran and missed it. Re-credit so movement
             # actions get their adherence signal.
             try:
                 from .auto_complete import auto_credit_actions
 
-                summary = auto_credit_actions(config, yday.isoformat())
+                summary = auto_credit_actions(config, bday.isoformat())
                 if summary.get("credited"):
                     print(
                         f"Re-credited {len(summary['credited'])} action(s) for "
-                        f"{yday} from backfilled Fitbit activity."
+                        f"{bday} from backfilled Fitbit activity."
                     )
             except Exception as exc:
                 print(f"Fitbit backfill re-credit skipped: {exc}")
-    except Exception as exc:
-        print(f"Fitbit yesterday-backfill skipped: {exc}")
+        except Exception as exc:
+            print(f"Fitbit backfill {bday} skipped: {exc}")
 
     payload = None
     last_error = ""
