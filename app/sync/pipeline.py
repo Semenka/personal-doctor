@@ -292,14 +292,29 @@ def load_fitbit_via_google_health(config: SyncConfig, day: date) -> Dict[str, An
 
 
 def fitbit_data_is_fresh(payload: Dict[str, Any]) -> bool:
-    """True if the Fitbit payload has real data (≥2 of the core signals non-zero)."""
+    """True if the Fitbit payload has real data worth storing/analysing.
+
+    The Health Connect -> Google Fit bridge often relays only ACTIVITY
+    (steps, active minutes, AZM, calories) — heart rate / sleep frequently
+    don't propagate through the deprecated Fitness API. An activity-only day
+    is still real, valuable data (movement adherence, energy expenditure), so
+    we accept it: fresh when ≥2 of a broad signal set are non-zero, OR steps
+    alone are clearly present (a real day always logs steps).
+    """
     signals = [
         (payload.get("steps") or 0) > 0,
+        (payload.get("active_minutes") or 0) > 0,
+        (payload.get("active_zone_minutes") or 0) > 0,
+        (payload.get("calories") or 0) > 0,
         (payload.get("sleep_hours") or 0) > 0,
         (payload.get("resting_hr") or 0) > 0,
         (payload.get("hrv") or 0) > 0,
+        (payload.get("spo2") or 0) > 0,
     ]
-    return sum(signals) >= 2
+    if sum(signals) >= 2:
+        return True
+    # A non-trivial step count on its own is a real, worn day.
+    return (payload.get("steps") or 0) >= 500
 
 
 def oura_data_is_fresh(payload: Dict[str, Any]) -> bool:
