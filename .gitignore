@@ -13,12 +13,14 @@ build/
 venv/
 ENV/
 
-# Environment variables
+# Environment variables — cover ALL .env variants (.env.bak etc. hold live
+# secrets too); only the example template is tracked.
 .env
-.env.local
-.env.production
-.env.save
+.env.*
 !.env.example
+
+# OpenClaw agent workspace (local runtime state, not project code)
+workspace/
 
 # IDE
 .idea/
