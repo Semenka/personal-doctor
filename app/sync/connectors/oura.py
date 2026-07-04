@@ -66,15 +66,28 @@ def fetch_daily_summary(config: SyncConfig, day: date) -> Dict[str, Any]:
 
     # sleep periods endpoint has detailed metrics (duration, HR, HRV)
     # that are NOT available in daily_sleep.
-    # Oura attributes sleep to the date it STARTED, so overnight sleep
-    # (e.g. 23:00 Apr 20 -> 07:00 Apr 21) has day=Apr 20.
-    # We check both the target day AND the previous day to find the
-    # overnight sleep that corresponds to today's daily_sleep score.
+    # Oura attributes a night to the WAKE-UP date (verified live 2026-07-04:
+    # bedtime_start 06-28 23:28 carries day=06-29), matching daily_sleep's day.
+    # The query window spans day-1..day, but the sleep endpoint returns
+    # records attributed to the day AFTER end_date too (its end bound acts
+    # inclusively after our +1 bump) — without an explicit day filter,
+    # "tomorrow's" night leaks into today's payload and shifts/duplicates
+    # nights across daily files (observed 06-28→07-03).
     yesterday = day - timedelta(days=1)
     sleep_periods = (
         _fetch_collection(config, token, "sleep", yesterday, yesterday) +
         _fetch_collection(config, token, "sleep", day, day)
     )
+    target_iso = day.isoformat()
+
+    def _belongs_to_day(sp) -> bool:
+        if sp.get("day") == target_iso:
+            return True
+        # Defensive: some records may carry day=start-date; accept a night
+        # that ENDS on the target morning as well.
+        return str(sp.get("bedtime_end") or "")[:10] == target_iso
+
+    sleep_periods = [sp for sp in sleep_periods if _belongs_to_day(sp)]
 
     # Find the primary sleep period:
     # 1. Prefer type=long_sleep (avoids trusting period==0 which can be a nap)
@@ -94,10 +107,17 @@ def fetch_daily_summary(config: SyncConfig, day: date) -> Dict[str, Any]:
     elif sleep_periods:
         primary_sleep = max(sleep_periods, key=_sleep_duration)
 
+    def _for_day(records, iso):
+        """First record attributed to the exact day (guards the same
+        next-day leak on the daily_* endpoints)."""
+        exact = [r for r in records if r.get("day") == iso]
+        return exact[0] if exact else {}
+
+    activity_day = (day - timedelta(days=1)) if activity_is_previous else day
     return {
-        "daily_sleep": daily_sleep[0] if daily_sleep else {},
-        "daily_activity": daily_activity[0] if daily_activity else {},
-        "daily_readiness": daily_readiness[0] if daily_readiness else {},
+        "daily_sleep": _for_day(daily_sleep, target_iso),
+        "daily_activity": _for_day(daily_activity, activity_day.isoformat()),
+        "daily_readiness": _for_day(daily_readiness, target_iso),
         "sleep_period": primary_sleep,
         "activity_is_previous": activity_is_previous,
     }

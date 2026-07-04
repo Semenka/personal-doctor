@@ -245,6 +245,16 @@ def _alert_fitbit_auth_failure(config, detail: str) -> None:
         pass
 
 
+def _fitbit_payload_improves(old, new) -> bool:
+    """True when the re-fetched payload holds strictly more data than stored —
+    never regress a finalized day, always replace an upload-lag stub."""
+    for key in ("steps", "sleep_hours", "resting_hr", "active_zone_minutes",
+                "active_minutes", "calories", "spo2", "hrv"):
+        if (new.get(key) or 0) > (old.get(key) or 0):
+            return True
+    return False
+
+
 def run_fitbit_sync() -> None:
     """07:43 — pull the day's Fitbit (bracelet) data into fitbit_<date>.json.
 
@@ -303,11 +313,16 @@ def run_fitbit_sync() -> None:
     for back in range(1, BACKFILL_DAYS + 1):
         bday = day - timedelta(days=back)
         try:
+            # Always re-fetch: a stored file can pass the freshness check yet
+            # still be an upload-lag stub (e.g. 47 steps written at 07:43
+            # before the phone bridge relayed the real day — observed
+            # 07-01..07-03 stuck as stubs while the cloud held 17k steps).
+            # Overwrite whenever the cloud now has strictly more data.
             existing = _load_stored_daily(config, bday.isoformat(), source="fitbit")
-            if existing and fitbit_data_is_fresh(existing):
-                continue
             bpayload = loader(config, bday)
             if not fitbit_data_is_fresh(bpayload):
+                continue
+            if existing and not _fitbit_payload_improves(existing, bpayload):
                 continue
             write_daily_json(config.data_dir, bday.isoformat(), bpayload, source="fitbit")
             print(f"Backfilled Fitbit {bday} via {label} (late upload recovered).")
@@ -396,6 +411,28 @@ def run_gdrive_sync() -> None:
         print("Google Drive sync: no new files.")
 
 
+def _recent_fitbit_activity(config, day, lookback_days: int = 2) -> bool:
+    """True if a finalized Fitbit day in [day-lookback_days, day] has real steps.
+
+    Same-day Fitbit files lag (the Google-Health phone bridge often only
+    finalizes a day in the next morning's backfill), so those partial files
+    show a handful of steps (e.g. 47/93). A threshold of 500 steps cleanly
+    separates those upload-lag stubs from a genuinely recorded active day, so
+    we treat Fitbit as "alive" only when there's real recent movement data to
+    advise on.
+    """
+    from datetime import timedelta
+
+    from .auto_complete import _load_fitbit
+
+    for i in range(lookback_days + 1):
+        d = (day - timedelta(days=i)).isoformat()
+        fb = _load_fitbit(config.data_dir, d)
+        if fb and (fb.get("steps") or 0) >= 500:
+            return True
+    return False
+
+
 def run_daily_advisor() -> None:
     from datetime import datetime
 
@@ -441,9 +478,20 @@ def run_daily_advisor() -> None:
         print(f"  freshness re-sync check skipped: {exc}")
 
     # Oura freshness short-circuit: if the last 3 days have no real sleep/HRV
-    # data, skip the LLM call and send a "fix your ring" warning instead.
+    # data, we would normally skip the LLM call and send a bare "fix your ring"
+    # warning. But that withholds the whole health digest (fertility protocol,
+    # labs, biomarker trends, heat-avoidance, activity coaching) on stale-Oura
+    # mornings — exactly what happened 2026-06-29, when the user got only a
+    # warning and no advice. The advisor already handles missing Oura
+    # gracefully and folds in Fitbit activity + labs, so only fall back to the
+    # bare warning when Fitbit activity is ALSO dead. If a recent Fitbit day
+    # has real steps, generate the full advice instead.
     freshness = check_oura_freshness(config, day, max_stale_days=3)
-    if not freshness["fresh"] and freshness["stale_days"] >= 3:
+    if (
+        not freshness["fresh"]
+        and freshness["stale_days"] >= 3
+        and not _recent_fitbit_activity(config, day)
+    ):
         advice = build_stale_oura_advice(day, freshness)
         print(f"Oura stale for {freshness['stale_days']} days — sending warning email.")
         save_advice_local(config, advice)
