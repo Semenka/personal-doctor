@@ -902,6 +902,28 @@ def build_stale_oura_advice(day: date, freshness: Dict[str, Any]) -> Dict[str, A
     }
 
 
+def build_stale_oura_banner(day: date, freshness: Dict[str, Any]) -> str:
+    """Return a short 'sync your ring' banner to prepend onto the full advice.
+
+    Unlike ``build_stale_oura_advice`` (which replaces the whole digest with a
+    bare warning), this keeps the nudge but lets the full labs / fertility
+    protocol / biomarker advice ship underneath it. The ring frequently uploads
+    later the same morning, so the wording is a gentle "not synced yet" rather
+    than "your ring is broken".
+    """
+    stale_days = freshness.get("stale_days", 0)
+    last_fresh = freshness.get("last_fresh_date") or "never"
+    return (
+        f"### ⚠️ Oura not synced yet this morning\n\n"
+        f"No fresh sleep / HRV / readiness by 8 AM (stale **{stale_days} day(s)**; "
+        f"last good sync: {last_fresh}). The ring may still upload later today — "
+        "so today's recovery-based tips are limited, but your labs, fertility "
+        "protocol and biomarker trends below don't need it.\n\n"
+        "**Fix now:** open the Oura app → manual sync; charge the ring if low (<20%).\n\n"
+        "---"
+    )
+
+
 def print_advice(advice: Dict[str, Any]) -> None:
     """Pretty-print the daily advice to the terminal."""
     print(f"\n{'='*60}")

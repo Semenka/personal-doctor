@@ -244,6 +244,13 @@ def send_whatsapp_advice(config: SyncConfig, advice: Dict[str, Any]) -> bool:
     micro_wins = parsed.get("micro_wins", [])
 
     lines = [f"🩺 Daily Plan — {day}", f"🎯 Priority: {priority}"]
+
+    # If Oura hadn't synced by 8 AM, surface a one-line nudge on the phone channel
+    # too (the full plan below still ships from labs + protocol). Drives the user
+    # to sync the ring same-day, which is what actually restores freshness.
+    stale_days = (advice.get("context_summary") or {}).get("oura_stale_days") or 0
+    if stale_days:
+        lines.insert(1, f"⚠️ Oura not synced ({stale_days}d) — open Oura app to sync")
     if backup:
         lines.append(f"🔁 Backup: {backup}")
     if micro_wins:

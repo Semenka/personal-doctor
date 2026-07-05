@@ -487,27 +487,29 @@ def run_daily_advisor() -> None:
     # bare warning when Fitbit activity is ALSO dead. If a recent Fitbit day
     # has real steps, generate the full advice instead.
     freshness = check_oura_freshness(config, day, max_stale_days=3)
+    stale_banner = None
     if (
         not freshness["fresh"]
         and freshness["stale_days"] >= 3
         and not _recent_fitbit_activity(config, day)
     ):
-        advice = build_stale_oura_advice(day, freshness)
-        print(f"Oura stale for {freshness['stale_days']} days — sending warning email.")
-        save_advice_local(config, advice)
-        try:
-            if config.email_to and config.smtp_host:
-                email_advice(config, advice)
-                print(f"Emailed Oura-stale warning to {config.email_to}")
-        except Exception as exc:
-            print(f"Stale-warning email failed: {exc}")
-        try:
-            from .whatsapp_sender import send_whatsapp_advice
+        # Oura stale AND Fitbit quiet at 08:00. We used to short-circuit here to a
+        # bare "fix your ring" warning and WITHHOLD THE ENTIRE DIGEST. But (a) the
+        # ring usually uploads later the same day — 2026-06-29 / 07-02 / 07-03 each
+        # showed fresh Oura hours after that 08:00 warning fired, so the stale
+        # detection is often a false alarm — and (b) labs, the fertility protocol,
+        # biomarker trends and heat-avoidance advice need NO wearable data at all.
+        # Withholding them lost the core fertility/energy value on those mornings.
+        # Now: generate the full advice (the advisor already degrades gracefully
+        # when wearable data is missing) and just prepend a sync-your-ring banner,
+        # so the user always gets both the nudge AND their protocol.
+        from .daily_advisor import build_stale_oura_banner
 
-            send_whatsapp_advice(config, advice)
-        except Exception as exc:
-            print(f"WhatsApp stale-warning send failed: {exc}")
-        return
+        stale_banner = build_stale_oura_banner(day, freshness)
+        print(
+            f"Oura stale for {freshness['stale_days']} days — generating full advice "
+            "with a sync-your-ring banner (no longer withholding the digest)."
+        )
 
     try:
         advice = generate_daily_advice(config, day)
@@ -545,6 +547,10 @@ def run_daily_advisor() -> None:
             except Exception as email_exc:
                 print(f"Fallback email also failed: {email_exc}")
         return
+
+    if stale_banner:
+        advice["advice"] = stale_banner + "\n\n" + advice.get("advice", "")
+        advice.setdefault("context_summary", {})["oura_stale_days"] = freshness["stale_days"]
 
     print_advice(advice)
     local_path = save_advice_local(config, advice)
