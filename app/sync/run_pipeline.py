@@ -93,9 +93,9 @@ def main() -> int:
     # ── Step 3: AI Daily Advisor ────────────────────────────────────
     print("[3/4] AI Daily Advisor (Gemini 3 Flash)...")
     advice = None
+    stale_banner = None
     from .daily_advisor import (
         advisor_has_credentials,
-        build_stale_oura_advice,
         email_advice,
         generate_daily_advice,
         save_advice_local,
@@ -105,24 +105,35 @@ def main() -> int:
     if not advisor_has_credentials(config):
         print("  FAIL: Advisor API key not set for selected model.")
     else:
-        from .pipeline import check_oura_freshness
+        from .pipeline import check_fitbit_freshness
 
-        # Oura freshness short-circuit — skip LLM on stale data
-        freshness = check_oura_freshness(config, day, max_stale_days=3)
+        # Wearable freshness: nudge, never withhold. This used to short-circuit
+        # on Oura and replace the WHOLE digest with a bare "fix your ring"
+        # warning — which, now that Oura is gone and always reads stale, would
+        # make every manual run emit that warning instead of the digest. The
+        # scheduled path stopped doing this in d6c097b; this is the same fix for
+        # the manual path, retargeted at the Fitbit Air.
+        freshness = check_fitbit_freshness(config, day, max_stale_days=3)
         if not freshness["fresh"] and freshness["stale_days"] >= 3:
-            advice = build_stale_oura_advice(day, freshness)
-            print(
-                f"  SHORT-CIRCUIT: Oura stale for {freshness['stale_days']}d "
-                f"(last good: {freshness['last_fresh_date']}). "
-                "Sending stale-data warning instead of LLM call."
+            stale_banner = (
+                "### ⚠️ Fitbit Air has not synced recently\n\n"
+                "Open Fitbit and Health Connect on the phone, then confirm data "
+                "sharing is active."
             )
-            save_advice_local(config, advice)
-            # Skip to Step 4 (email + WhatsApp delivery below) with stale-warning payload
-            # by falling through past the else-block via the same `advice` variable.
+            print(
+                f"  NOTE: Fitbit stale for {freshness['stale_days']}d "
+                f"(last good: {freshness['last_fresh_date']}). "
+                "Generating full advice with a sync banner."
+            )
 
         try:
             if advice is None:
                 advice = generate_daily_advice(config, day)
+            if stale_banner:
+                advice["advice"] = stale_banner + "\n\n" + advice.get("advice", "")
+                advice.setdefault("context_summary", {})["fitbit_stale_days"] = (
+                    freshness["stale_days"]
+                )
             ctx = advice.get("context_summary", {})
             print(f"  OK: generated ({len(advice['advice'])} chars)")
             print(f"    Fitbit Air data: {'Yes' if ctx.get('fitbit_available') else 'No'}")

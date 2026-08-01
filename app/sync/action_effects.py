@@ -15,24 +15,44 @@ from .config import SyncConfig
 
 # Metrics where higher = better (resting_hr is inverted)
 _METRICS = [
+    # Recovery metrics. The Fitbit Air currently reports none of these — the
+    # Health Connect → Google Fit bridge relays activity only — so they stay
+    # here inert, ready for whenever a recovery source is reconnected, and they
+    # still resolve against historical Oura days.
     ("hrv", "HRV", "ms", False),
     ("resting_hr", "Resting HR", "bpm", True),  # lower is better
     ("sleep_quality", "Sleep Score", "", False),
     ("readiness_score", "Readiness", "", False),
     ("deep_sleep_min", "Deep Sleep", "min", False),
+    # Activity metrics the Fitbit Air does deliver. Without these the whole
+    # outcomes engine has nothing to measure and renders empty every day.
+    ("steps", "Steps", "", False),
+    ("active_minutes", "Active Minutes", "min", False),
 ]
 
 MIN_SAMPLES = 2
 
 
-def _load_oura_day(data_dir: Path, day: str) -> Dict[str, Any] | None:
-    path = data_dir / f"daily_{day}.json"
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError):
-        return None
+def _load_wearable_day(data_dir: Path, day: str) -> Dict[str, Any] | None:
+    """Next-day wearable payload: Fitbit Air first, historical Oura as fallback.
+
+    Reading only ``daily_<date>.json`` silently broke this module after the
+    Fitbit migration — those files are now all-zero Oura stubs, every value hits
+    the ``val == 0`` guard, and no effect is ever computed. Preferring the
+    Fitbit payload while still falling back to Oura keeps historical outcomes
+    intact across the device switch.
+    """
+    for name in (f"fitbit_{day}.json", f"daily_{day}.json"):
+        path = data_dir / name
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        if payload:
+            return payload
+    return None
 
 
 def _load_actions_day(data_dir: Path, day: str) -> List[Dict[str, Any]]:
@@ -86,10 +106,10 @@ def compute_action_effects(
             for action_date, was_done in day_records:
                 # Look at next-day metrics
                 next_day = action_date + timedelta(days=1)
-                oura = _load_oura_day(data_dir, next_day.isoformat())
-                if not oura:
+                wearable = _load_wearable_day(data_dir, next_day.isoformat())
+                if not wearable:
                     continue
-                val = oura.get(metric_key)
+                val = wearable.get(metric_key)
                 if val is None or val == 0:
                     continue
                 try:
