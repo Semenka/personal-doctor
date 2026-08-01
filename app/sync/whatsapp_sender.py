@@ -15,8 +15,10 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shutil
 import subprocess
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .config import SyncConfig
@@ -44,13 +46,80 @@ _GATEWAY_HEAL_SIGNATURES = (
 
 _gateway_healed_this_process = False
 
+_OPENCLAW_PATH_CACHE: Optional[str] = None
+
+
+def _openclaw_runs(candidate: str) -> bool:
+    """True if this openclaw actually executes (right Node major/minor, deps present)."""
+    try:
+        probe = subprocess.run(
+            [candidate, "--version"],
+            capture_output=True, text=True, timeout=15, check=False,
+        )
+    except Exception:
+        return False
+    return probe.returncode == 0
+
+
+def _resolve_openclaw_bin() -> Optional[str]:
+    """Absolute path to an openclaw CLI that RUNS, or None.
+
+    A bare ``which openclaw`` is NOT enough. launchd pins the service to a
+    single nvm bin dir (see com.personal-doctor.plist PATH), and when the user
+    upgrades node, that pin goes stale: PATH still resolves openclaw to the old
+    version's shim, whose ``#!/usr/bin/env node`` then picks the OLD node and
+    openclaw refuses to start ("Node.js >=24.15.0 is required (current:
+    v24.14.1)"). That killed every WhatsApp send for 12+ days while email kept
+    working, so it never looked like an outage.
+
+    So we don't just find a file — we probe each candidate with ``--version``
+    and take the first that exits 0. That also self-heals the next time node
+    moves, without editing the plist.
+    """
+    global _OPENCLAW_PATH_CACHE
+    if _OPENCLAW_PATH_CACHE and Path(_OPENCLAW_PATH_CACHE).exists():
+        return _OPENCLAW_PATH_CACHE
+
+    candidates: list[str] = []
+    # 1) Explicit override wins.
+    if env := os.getenv("OPENCLAW_BIN"):
+        candidates.append(env)
+    # 2) The installer's own shim — it hardcodes the node it was installed
+    #    against, so it survives a stale PATH.
+    candidates.append(str(Path.home() / ".openclaw/bin/openclaw"))
+    # 3) Whatever PATH offers (correct in an interactive shell).
+    if found := shutil.which("openclaw"):
+        candidates.append(found)
+    # 4) Every nvm-installed node version, newest first.
+    nvm_root = Path.home() / ".nvm/versions/node"
+    if nvm_root.is_dir():
+        for c in sorted(nvm_root.glob("*/bin/openclaw"), reverse=True):
+            candidates.append(str(c))
+    # 5) Other known absolute locations.
+    candidates += ["/opt/homebrew/bin/openclaw", "/usr/local/bin/openclaw"]
+
+    seen: set[str] = set()
+    for c in candidates:
+        if not c or c in seen:
+            continue
+        seen.add(c)
+        if Path(c).exists() and _openclaw_runs(c):
+            if c != shutil.which("openclaw"):
+                logger.info(f"Resolved openclaw to {c} (PATH copy unusable).")
+            _OPENCLAW_PATH_CACHE = c
+            return c
+    return None
+
 
 def _openclaw_send_once(
     message: str, target: str, channel: str = "whatsapp", timeout_s: int = 30,
 ) -> tuple[bool, str]:
     """One raw `openclaw message send`. Returns (ok, stderr_or_empty)."""
+    binary = _resolve_openclaw_bin()
+    if not binary:
+        return False, "no runnable openclaw CLI found (checked PATH, ~/.openclaw, nvm)"
     cmd = [
-        "openclaw", "message", "send",
+        binary, "message", "send",
         "--channel", channel,
         "--target", target,
         "--message", message,
