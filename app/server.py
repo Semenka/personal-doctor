@@ -276,10 +276,17 @@ def start_server():
     # data are broken. Easier than digging through logs after a regression.
     def _self_check() -> None:
         import subprocess
-        # 1. WhatsApp dry-run (1s — does not actually send)
+        # 1. WhatsApp dry-run (1s — does not actually send).
+        #    Resolve the binary the same way the sender does: a bare "openclaw"
+        #    hits whatever the launchd PATH pins, which may be a copy bound to
+        #    an unsupported Node and would report a false outage here.
         try:
+            from app.sync.whatsapp_sender import _resolve_openclaw_bin
+            openclaw_bin = _resolve_openclaw_bin()
+            if not openclaw_bin:
+                raise FileNotFoundError("no runnable openclaw CLI")
             r = subprocess.run(
-                ["openclaw", "message", "send", "--channel", "whatsapp",
+                [openclaw_bin, "message", "send", "--channel", "whatsapp",
                  "--target", os.getenv("WHATSAPP_TARGET", "+393491913903"),
                  "--message", "selfcheck", "--dry-run"],
                 capture_output=True, text=True, timeout=10, check=False,

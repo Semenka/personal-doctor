@@ -1,12 +1,20 @@
-"""Side-by-side Oura vs Fitbit comparison layer.
+"""Wearable comparison layer — Fitbit Air primary, Oura historical.
 
-The user runs two wearables and wants them shown side by side (not merged),
-to compare devices. Oura stays the flat-key primary in daily_<date>.json;
-Fitbit is the parallel fitbit_<date>.json. This module reads both and renders
-the comparison for the three surfaces: advisor prompt, email, WhatsApp.
+The user has migrated to a single wearable: the Fitbit Air, in
+fitbit_<date>.json. Oura stopped syncing after 2026-07-20 and its
+daily_<date>.json files are now all-zero stubs, so on current days there is
+nothing to compare.
 
-Shared metrics compared: HRV, resting HR, sleep hours, deep sleep, steps,
-breathing rate. SpO2 is Fitbit-only (shown when present).
+This module therefore renders in two modes, chosen per day by whether Oura
+actually contributed a value:
+  - single-device (the normal case now): just today's Fitbit Air readings;
+  - side-by-side: kept for historical dates that genuinely have both, and for
+    the case where a second device is worn again.
+
+The distinction matters beyond cosmetics: the advisor block feeds the LLM
+prompt, and the old unconditional text asserted "Both devices are worn" and
+told the model to trust Oura for HRV/sleep/resting-HR/temperature — advice
+weighting toward a device that has reported nothing for weeks.
 """
 from __future__ import annotations
 
@@ -36,25 +44,26 @@ _COMPARE_METRICS = [
     ("floors", "Floors", "", True),
 ]
 
-# Per-metric AUTHORITATIVE source — which device to weight more when both
-# report a value. Grounded in device validation:
-#   - Oura ring: research-validated for overnight recovery — HRV (overnight
-#     RMSSD), sleep duration + staging, resting HR, body temperature. Finger
-#     PPG at rest is cleaner than wrist PPG.
-#   - Fitbit wrist: better for daytime movement — steps, Active Zone Minutes,
-#     distance, floors — and exposes SpO2 + VO2max that Oura's daily API doesn't.
-# Both are KEPT and shown; the preferred one is starred and is what blended
-# consumers use as the primary value.
+# Per-metric AUTHORITATIVE source — which device to weight when both report a
+# value. The Fitbit Air is now the user's only wearable, so it is authoritative
+# for every metric and is the default for anything not listed.
+#
+# The table is retained rather than deleted because it still decides the
+# starred device on historical dates that genuinely carry both payloads, and it
+# is the single place to re-weight if a second device is ever worn again. The
+# Oura entries below are the *historical* rationale, kept for that case:
+# research-validated overnight recovery (HRV/sleep staging/resting HR/body
+# temperature) from resting finger PPG. They no longer apply to current days.
 _METRIC_PREFERENCE: Dict[str, str] = {
-    "hrv": "oura",
-    "resting_hr": "oura",
-    "sleep_hours": "oura",
-    "deep_sleep_min": "oura",
-    "rem_sleep_min": "oura",
-    "light_sleep_min": "oura",
-    "readiness_score": "oura",
-    "temp_deviation": "oura",
-    "avg_breath": "oura",
+    "hrv": "fitbit",
+    "resting_hr": "fitbit",
+    "sleep_hours": "fitbit",
+    "deep_sleep_min": "fitbit",
+    "rem_sleep_min": "fitbit",
+    "light_sleep_min": "fitbit",
+    "readiness_score": "fitbit",
+    "temp_deviation": "fitbit",
+    "avg_breath": "fitbit",
     "steps": "fitbit",
     "active_minutes": "fitbit",
     "active_zone_minutes": "fitbit",
@@ -66,8 +75,13 @@ _METRIC_PREFERENCE: Dict[str, str] = {
 
 
 def preferred_source(metric: str) -> str:
-    """Authoritative device for a metric (defaults to Oura for overnight signals)."""
-    return _METRIC_PREFERENCE.get(metric, "oura")
+    """Authoritative device for a metric (defaults to the Fitbit Air)."""
+    return _METRIC_PREFERENCE.get(metric, "fitbit")
+
+
+def _has_oura(rows: List[Dict[str, Any]]) -> bool:
+    """True if any row carries a real Oura reading for this day."""
+    return any(r.get("oura") for r in rows)
 
 
 def _load(config: SyncConfig, day: str, source: str) -> Optional[Dict[str, Any]]:
@@ -91,7 +105,7 @@ def compare_metrics(config: SyncConfig, day: str) -> List[Dict[str, Any]]:
     oura = _load(config, day, "oura")
     fitbit = _load(config, day, "fitbit")
     if not fitbit:
-        return []  # nothing to compare — Oura-only day
+        return []  # no primary wearable payload for this day
 
     rows: List[Dict[str, Any]] = []
     for key, label, unit, fitbit_only in _COMPARE_METRICS:
@@ -152,6 +166,32 @@ def render_compare_email_html(config: SyncConfig, day: str) -> str:
     rows = compare_metrics(config, day)
     if not rows:
         return ""
+
+    if not _has_oura(rows):
+        # Single-device card: one value column, no phantom Oura column.
+        body = ""
+        for r in rows:
+            body += (
+                '<tr>'
+                f'<td style="padding:5px 10px;border-bottom:1px solid #eee;font-size:13px;">'
+                f'{escape(r["label"])}</td>'
+                f'<td style="padding:5px 10px;border-bottom:1px solid #eee;font-size:13px;'
+                f'text-align:right;">{_fmt(r["fitbit"], r["unit"])}</td>'
+                '</tr>'
+            )
+        return (
+            '<div style="margin-top:28px;padding:16px 20px;background:#eff6ff;'
+            'border-radius:12px;border:1px solid #bfdbfe;">'
+            '<h3 style="color:#1e40af;margin:0 0 4px 0;font-size:16px;">'
+            '&#x231A; Fitbit Air</h3>'
+            '<div style="font-size:12px;color:#6b7280;margin-bottom:8px;">'
+            'Today&rsquo;s wearable readings. Metrics not listed were not measured.</div>'
+            '<table cellspacing="0" cellpadding="0" border="0" style="width:100%;">'
+            '<tr><th style="text-align:left;font-size:12px;color:#64748b;padding:4px 10px;">Metric</th>'
+            '<th style="text-align:right;font-size:12px;color:#64748b;padding:4px 10px;">Today</th></tr>'
+            f'{body}</table></div>'
+        )
+
     body = ""
     for r in rows:
         # Green when devices agree, amber when they diverge, grey when one-sided.
@@ -196,7 +236,12 @@ def render_compare_whatsapp(config: SyncConfig, day: str) -> str:
     rows = compare_metrics(config, day)
     if not rows:
         return ""
-    lines = ["⌚ Oura vs Fitbit (★ = weighted more)"]
+    if not _has_oura(rows):
+        lines = ["⌚ Fitbit Air"]
+        for r in rows:
+            lines.append(f"▫️ {r['label']}: {_fmt(r['fitbit'], r['unit'])}")
+        return "\n".join(lines)
+    lines = ["⌚ Oura vs Fitbit Air (★ = weighted more)"]
     for r in rows:
         if r["agree"] is True:
             dot = "🟢"
@@ -219,16 +264,31 @@ def render_compare_advisor_block(config: SyncConfig, day: str) -> str:
     rows = compare_metrics(config, day)
     if not rows:
         return ""
+
+    if not _has_oura(rows):
+        # Single-device day (the normal case since the Fitbit Air migration).
+        # Say only what is true: one wearable, these readings. Naming the
+        # absent metrics matters — otherwise the model can read "no HRV line"
+        # as "HRV was fine" and give recovery advice with no recovery data.
+        lines = [
+            "## ⌚ Today's wearable (Fitbit Air — the user's only device)",
+            "These are the only wearable readings available today. Do not infer "
+            "recovery status from their absence: any metric not listed below "
+            "was NOT measured. If you need sleep, HRV, resting HR or body "
+            "temperature and they are missing, say so plainly rather than "
+            "assuming a normal value.",
+            "",
+        ]
+        for r in rows:
+            lines.append(f"- {r['label']}: {_fmt(r['fitbit'], r['unit'])}")
+        return "\n".join(lines)
+
     lines = [
-        "## ⌚ Two-wearable comparison (Oura vs Fitbit, today)",
-        "Both devices are worn. WEIGHTING: trust **Oura** for recovery/overnight "
-        "signals (HRV, sleep duration + staging, resting HR, body temperature, "
-        "breathing) — it's the validated standard there. Trust **Fitbit** for "
-        "daytime activity (steps, Active Zone Minutes, distance, floors) and for "
-        "SpO2 + VO2max, which Oura's daily API doesn't provide. The starred (★) "
-        "device below is the one to weight for each metric; when the two diverge "
-        "materially, base the recommendation on the starred source but you may "
-        "note the disagreement.",
+        "## ⌚ Two-wearable comparison (Oura vs Fitbit Air, today)",
+        "Both devices reported today. WEIGHTING: the starred (★) device is the "
+        "one to weight for each metric; when the two diverge materially, base "
+        "the recommendation on the starred source but you may note the "
+        "disagreement.",
         "",
     ]
     for r in rows:
