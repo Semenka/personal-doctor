@@ -139,7 +139,14 @@ def main() -> int:
 
     tok = _token_path(config)
     tok.parent.mkdir(parents=True, exist_ok=True)
-    tok.write_text(creds.to_json())
+    # OAuth tokens contain a client secret and refresh token. Keep the file
+    # private and make replacement atomic so scheduled readers never observe
+    # a partial token during re-authorization.
+    tmp = tok.with_suffix(tok.suffix + ".tmp")
+    tmp.write_text(creds.to_json())
+    tmp.chmod(0o600)
+    tmp.replace(tok)
+    tok.chmod(0o600)
     print(f"✅ Google Health token saved to {tok}")
     print("The 07:43 daily sync will pick it up automatically.")
     return 0

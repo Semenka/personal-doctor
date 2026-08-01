@@ -125,7 +125,7 @@ def main() -> int:
                 advice = generate_daily_advice(config, day)
             ctx = advice.get("context_summary", {})
             print(f"  OK: generated ({len(advice['advice'])} chars)")
-            print(f"    Oura data: {'Yes' if ctx.get('oura_available') else 'No'}")
+            print(f"    Fitbit Air data: {'Yes' if ctx.get('fitbit_available') else 'No'}")
             print(f"    Lab reports: {ctx.get('lab_reports_count', 0)}")
             print(f"    Image scans: {ctx.get('image_analyses_count', 0)}")
 

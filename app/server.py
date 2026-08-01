@@ -213,15 +213,15 @@ def create_app() -> FastAPI:
         from app.sync.trend_analyzer import (
             compute_metric_trends,
             compute_rolling_averages,
-            load_oura_history,
+            load_primary_wearable_history,
         )
 
         today = datetime.now(tz=config.timezone).date()
         history = load_action_history_with_sheets(config, num_days=7)
         streaks = compute_streaks(config.data_dir)
-        oura_history = load_oura_history(config.data_dir, today)
-        averages = compute_rolling_averages(oura_history)
-        trends = compute_metric_trends(oura_history)
+        fitbit_history = load_primary_wearable_history(config.data_dir, today)
+        averages = compute_rolling_averages(fitbit_history)
+        trends = compute_metric_trends(fitbit_history)
 
         return _render_dashboard(today, history, streaks, averages, trends, config)
 
@@ -239,7 +239,6 @@ def start_server():
         run_daily_advisor,
         run_fitbit_sync,
         run_gdrive_sync,
-        run_oura_sync,
         run_overdue_checkup_alert,
         run_research_sync,
         run_supplement_check_job,
@@ -255,9 +254,7 @@ def start_server():
                       id="research_daily", misfire_grace_time=3600)
     scheduler.add_job(run_gdrive_sync, "cron", hour=7, minute=30,
                       id="gdrive_daily", misfire_grace_time=3600)
-    scheduler.add_job(run_oura_sync, "cron", hour=7, minute=40,
-                      id="oura_daily", misfire_grace_time=3600)
-    scheduler.add_job(run_fitbit_sync, "cron", hour=7, minute=43,
+    scheduler.add_job(run_fitbit_sync, "cron", hour=7, minute=40,
                       id="fitbit_daily", misfire_grace_time=3600)
     scheduler.add_job(run_auto_credit_job, "cron", hour=7, minute=42,
                       id="auto_credit_daily", misfire_grace_time=3600)
@@ -275,7 +272,7 @@ def start_server():
                       id="weekly_retro", misfire_grace_time=7200)
     scheduler.start()
 
-    # Boot-time self-check: log loud warnings if WhatsApp delivery or Oura
+    # Boot-time self-check: log loud warnings if WhatsApp delivery or Fitbit Air
     # data are broken. Easier than digging through logs after a regression.
     def _self_check() -> None:
         import subprocess
@@ -299,30 +296,29 @@ def start_server():
             logger.warning("Self-check: openclaw CLI not on PATH — WhatsApp will fail")
         except Exception as exc:
             logger.warning(f"Self-check: WhatsApp probe errored: {exc}")
-        # 2. Oura freshness (uses on-disk payload, no API call)
+        # 2. Fitbit Air freshness (uses on-disk payload, no API call)
         try:
-            from app.sync.pipeline import oura_data_is_fresh
-            from app.sync.storage import load_daily_payload
+            from app.sync.pipeline import fitbit_data_is_fresh
+            from app.sync.storage import load_wearable_payload_file
             today_iso = datetime.now(tz=config.timezone).date().isoformat()
             try:
-                p = load_daily_payload(config, today_iso)
+                p = load_wearable_payload_file(config.data_dir, today_iso, source="fitbit")
             except FileNotFoundError:
                 p = None
             if p is None:
-                logger.info(f"Self-check: no Oura payload for {today_iso} yet (pre-08:00 sync window).")
-            elif not oura_data_is_fresh(p):
+                logger.info(f"Self-check: no Fitbit Air payload for {today_iso} yet.")
+            elif not fitbit_data_is_fresh(p):
                 logger.warning(
-                    f"⚠️ Self-check: today's Oura payload is empty "
-                    f"(hrv={p.get('hrv',0)}, sleep_hours={p.get('sleep_hours',0)}). "
-                    "Ring may not have synced yet — advisor will retry before generating advice."
+                    f"⚠️ Self-check: today's Fitbit Air payload is empty "
+                    f"(steps={p.get('steps',0)}, sleep_hours={p.get('sleep_hours',0)})."
                 )
             else:
                 logger.info(
-                    f"Self-check: Oura payload OK — hrv={p.get('hrv')}, "
-                    f"sleep={p.get('sleep_hours')}h, readiness={p.get('readiness_score')}."
+                    f"Self-check: Fitbit Air payload OK — steps={p.get('steps')}, "
+                    f"sleep={p.get('sleep_hours')}h."
                 )
         except Exception as exc:
-            logger.warning(f"Self-check: Oura probe errored: {exc}")
+            logger.warning(f"Self-check: Fitbit Air probe errored: {exc}")
 
     import threading
     threading.Thread(target=_self_check, daemon=True).start()
@@ -335,8 +331,8 @@ def start_server():
         import threading
         logger.info("Startup catch-up: today's advisor not yet sent, triggering now")
         threading.Thread(target=run_gdrive_sync, daemon=True).start()
-        threading.Thread(target=run_oura_sync, daemon=True).start()
-        # Delay advisor slightly so Oura data is fetched first
+        threading.Thread(target=run_fitbit_sync, daemon=True).start()
+        # Delay advisor slightly so Fitbit Air data is fetched first
         def _delayed_advisor():
             import time
             time.sleep(30)
@@ -353,7 +349,7 @@ def start_server():
     logger.info("  Schedule:")
     logger.info("    07:20  Research sync (PubMed + OpenAlex)")
     logger.info("    07:30  Google Drive health folder scan")
-    logger.info("    07:40  Oura Ring data sync")
+    logger.info("    07:40  Fitbit Air data sync")
     logger.info("    07:41  Anomaly detector")
     logger.info("    07:45  Supplement inventory check")
     logger.info("    08:00  AI daily advisor → email + WhatsApp")

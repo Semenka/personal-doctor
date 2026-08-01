@@ -139,7 +139,7 @@ def _qa_answer(config: SyncConfig, day: str, question: str) -> str:
         return ("Q&A is offline (no LLM credentials). For quick replies use "
                 "'1', '2', 'done', 'skip', or 'swap backup for X'.")
 
-    # Gather context: today's advice + Oura + action state
+    # Gather context: today's advice + Fitbit Air + action state
     advice_text = ""
     advisor_file = config.data_dir / "advisor" / f"daily_advice_{day}.json"
     if advisor_file.exists():
@@ -148,11 +148,11 @@ def _qa_answer(config: SyncConfig, day: str, question: str) -> str:
         except Exception:
             pass
 
-    oura_text = ""
-    oura_file = config.data_dir / f"daily_{day}.json"
-    if oura_file.exists():
+    wearable_text = ""
+    wearable_file = config.data_dir / f"fitbit_{day}.json"
+    if wearable_file.exists():
         try:
-            oura_text = oura_file.read_text()[:2000]
+            wearable_text = wearable_file.read_text()[:2000]
         except Exception:
             pass
 
@@ -165,14 +165,14 @@ def _qa_answer(config: SyncConfig, day: str, question: str) -> str:
     system = (
         "You are the user's personal health advisor. They are texting you via "
         "WhatsApp with a short question. Context you have: today's full daily "
-        "plan, today's Oura data, and their action completion state. "
+        "plan, today's Fitbit Air data, and their action completion state. "
         "Answer in 1-3 sentences. Be direct. Cite today's data. "
         "No disclaimers. No 'consult your doctor'. "
         "If a fact isn't in the context, say so briefly."
     )
     user = (
         f"Today ({day}) daily plan:\n{advice_text}\n\n"
-        f"Today's Oura:\n{oura_text}\n\n"
+        f"Today's Fitbit Air:\n{wearable_text}\n\n"
         f"Actions state:\n{action_summary}\n\n"
         f"User question: {question}"
     )

@@ -74,7 +74,11 @@ def _get_credentials(config: SyncConfig):
     creds = Credentials.from_authorized_user_file(str(tok), SCOPES)
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        tok.write_text(creds.to_json())
+        tmp = tok.with_suffix(tok.suffix + ".tmp")
+        tmp.write_text(creds.to_json())
+        tmp.chmod(0o600)
+        tmp.replace(tok)
+        tok.chmod(0o600)
     return creds
 
 

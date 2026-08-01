@@ -317,6 +317,33 @@ def fitbit_data_is_fresh(payload: Dict[str, Any]) -> bool:
     return (payload.get("steps") or 0) >= 500
 
 
+def check_fitbit_freshness(
+    config: SyncConfig, day: date, max_stale_days: int = 3
+) -> Dict[str, Any]:
+    """Check Fitbit Air freshness across canonical Fitbit files."""
+    from datetime import timedelta
+    from .storage import load_wearable_payload_file
+
+    stale_days = 0
+    last_fresh = None
+    for i in range(max_stale_days + 1):
+        d = (day - timedelta(days=i)).isoformat()
+        try:
+            payload = load_wearable_payload_file(config.data_dir, d, source="fitbit")
+        except FileNotFoundError:
+            stale_days += 1
+            continue
+        if fitbit_data_is_fresh(payload):
+            last_fresh = d
+            break
+        stale_days += 1
+    return {
+        "fresh": last_fresh is not None and stale_days == 0,
+        "stale_days": stale_days,
+        "last_fresh_date": last_fresh,
+    }
+
+
 def oura_data_is_fresh(payload: Dict[str, Any]) -> bool:
     """Return True if the Oura payload contains real (non-zero) sleep/recovery data.
 

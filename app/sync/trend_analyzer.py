@@ -1,4 +1,4 @@
-"""7-day trend analysis for Oura Ring metrics."""
+"""7-day trend analysis for the primary wearable (Fitbit Air)."""
 from __future__ import annotations
 
 import json
@@ -26,6 +26,53 @@ def load_oura_history(
             except (json.JSONDecodeError, OSError):
                 continue
     history.reverse()  # oldest first
+    return history
+
+
+def load_fitbit_history(
+    data_dir: Path, day: date, num_days: int = 7
+) -> List[Dict[str, Any]]:
+    """Load Fitbit Air history from canonical fitbit_<date>.json files."""
+    history = []
+    for i in range(num_days):
+        d = day - timedelta(days=i)
+        path = data_dir / f"fitbit_{d.isoformat()}.json"
+        if path.exists():
+            try:
+                payload = json.loads(path.read_text())
+                payload["_date"] = d.isoformat()
+                history.append(payload)
+            except (json.JSONDecodeError, OSError):
+                continue
+    history.reverse()
+    return history
+
+
+def load_primary_wearable_history(
+    data_dir: Path, day: date, num_days: int = 7
+) -> List[Dict[str, Any]]:
+    """Load a continuous history while migrating from Oura to Fitbit Air.
+
+    Fitbit is authoritative whenever a Fitbit payload exists for a date. Older
+    Oura payloads remain readable as a historical fallback; they are never
+    overwritten or deleted by the migration.
+    """
+    history = []
+    for i in range(num_days):
+        d = day - timedelta(days=i)
+        fitbit_path = data_dir / f"fitbit_{d.isoformat()}.json"
+        oura_path = data_dir / f"daily_{d.isoformat()}.json"
+        path = fitbit_path if fitbit_path.exists() else oura_path
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text())
+            payload["_date"] = d.isoformat()
+            payload.setdefault("source", "fitbit" if path == fitbit_path else "oura")
+            history.append(payload)
+        except (json.JSONDecodeError, OSError):
+            continue
+    history.reverse()
     return history
 
 

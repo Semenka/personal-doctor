@@ -36,11 +36,8 @@ def start_scheduler() -> None:
     # 07:30 — Scan Google Drive for new health reports
     scheduler.add_job(run_gdrive_sync, "cron", hour=7, minute=30,
                       id="gdrive_daily", misfire_grace_time=3600)
-    # 07:40 — Oura Ring data sync
-    scheduler.add_job(run_oura_sync, "cron", hour=7, minute=40,
-                      id="oura_daily", misfire_grace_time=3600)
-    # 07:43 — Fitbit data sync (second wearable, side-by-side with Oura)
-    scheduler.add_job(run_fitbit_sync, "cron", hour=7, minute=43,
+    # 07:40 — Fitbit Air data sync (sole wearable source)
+    scheduler.add_job(run_fitbit_sync, "cron", hour=7, minute=40,
                       id="fitbit_daily", misfire_grace_time=3600)
     # 08:00 — AI daily advisor (Gemini 3.1 Flash Lite): analyse Oura + reports → email
     scheduler.add_job(run_daily_advisor, "cron", hour=8, minute=0,
@@ -63,8 +60,7 @@ def start_scheduler() -> None:
         "Scheduler started:\n"
         "  07:20  Research sync (PubMed + OpenAlex)\n"
         "  07:30  Google Drive health folder scan\n"
-        "  07:40  Oura Ring data sync\n"
-        "  07:43  Fitbit data sync\n"
+        "  07:40  Fitbit Air data sync\n"
         "  07:41  Anomaly detector\n"
         "  07:45  Supplement inventory check\n"
         "  08:00  AI daily advisor → email + WhatsApp\n"
@@ -222,7 +218,7 @@ def _alert_fitbit_auth_failure(config, detail: str) -> None:
     msg = (
         "⚠️ Fitbit Air sync is DOWN — Google Health token expired.\n\n"
         f"The 07:43 daily sync can't pull bracelet data: {detail[:140]}\n\n"
-        "Two-step fix (Oura keeps working meanwhile):\n"
+        "Two-step fix:\n"
         "1) PERMANENT — publish the OAuth app so the token stops dying every "
         "7 days:\n"
         "   console.cloud.google.com/auth/audience → 'PUBLISH APP' "
@@ -263,8 +259,7 @@ def run_fitbit_sync() -> None:
          standalone dev portal is closed to new apps. Uses the same Google
          Cloud OAuth client as the Drive sync.
       2. Legacy Fitbit Web API — only if its old token exists.
-      3. Neither configured → graceful no-op (Oura-only pipeline).
-    Mirrors run_oura_sync (retry 3× with backoff).
+      3. Neither configured → graceful no-op with a clear authorization warning.
     """
     from datetime import datetime
 
@@ -445,33 +440,28 @@ def run_daily_advisor() -> None:
 
     day = datetime.now(tz=config.timezone).date()
     from .daily_advisor import (
-        build_stale_oura_advice,
         email_advice,
         generate_daily_advice,
         print_advice,
         save_advice_local,
         upload_advice_to_drive,
     )
-    from .pipeline import check_oura_freshness, oura_data_is_fresh
-    from .storage import load_daily_payload
+    from .pipeline import check_fitbit_freshness, fitbit_data_is_fresh
+    from .storage import load_wearable_payload_file
 
-    # Race-condition guard: the cron sync at 07:40 sometimes fires before the
-    # Oura ring has uploaded last night's sleep to the cloud. If today's saved
-    # payload is empty but the API now has data, refetch before invoking
-    # the LLM so the morning email isn't generated against zeros.
+    # Race-condition guard: refresh Fitbit Air before invoking the advisor.
     try:
         today_iso = day.isoformat()
         try:
-            current = load_daily_payload(config, today_iso)
+            current = load_wearable_payload_file(config.data_dir, today_iso, source="fitbit")
         except FileNotFoundError:
             current = None
-        if current is None or not oura_data_is_fresh(current):
+        if current is None or not fitbit_data_is_fresh(current):
             print(
-                "Oura payload for today is empty/missing — running a second "
-                "sync attempt before advisor (the Ring may have synced after the 07:40 cron)."
+                "Fitbit Air payload is empty/missing — running a second sync before advisor."
             )
             try:
-                run_oura_sync()
+                run_fitbit_sync()
             except Exception as resync_exc:
                 print(f"  resync failed (non-fatal): {resync_exc}")
     except Exception as exc:
@@ -486,29 +476,12 @@ def run_daily_advisor() -> None:
     # gracefully and folds in Fitbit activity + labs, so only fall back to the
     # bare warning when Fitbit activity is ALSO dead. If a recent Fitbit day
     # has real steps, generate the full advice instead.
-    freshness = check_oura_freshness(config, day, max_stale_days=3)
+    freshness = check_fitbit_freshness(config, day, max_stale_days=3)
     stale_banner = None
-    if (
-        not freshness["fresh"]
-        and freshness["stale_days"] >= 3
-        and not _recent_fitbit_activity(config, day)
-    ):
-        # Oura stale AND Fitbit quiet at 08:00. We used to short-circuit here to a
-        # bare "fix your ring" warning and WITHHOLD THE ENTIRE DIGEST. But (a) the
-        # ring usually uploads later the same day — 2026-06-29 / 07-02 / 07-03 each
-        # showed fresh Oura hours after that 08:00 warning fired, so the stale
-        # detection is often a false alarm — and (b) labs, the fertility protocol,
-        # biomarker trends and heat-avoidance advice need NO wearable data at all.
-        # Withholding them lost the core fertility/energy value on those mornings.
-        # Now: generate the full advice (the advisor already degrades gracefully
-        # when wearable data is missing) and just prepend a sync-your-ring banner,
-        # so the user always gets both the nudge AND their protocol.
-        from .daily_advisor import build_stale_oura_banner
-
-        stale_banner = build_stale_oura_banner(day, freshness)
-        print(
-            f"Oura stale for {freshness['stale_days']} days — generating full advice "
-            "with a sync-your-ring banner (no longer withholding the digest)."
+    if not freshness["fresh"] and freshness["stale_days"] >= 3:
+        stale_banner = (
+            "### ⚠️ Fitbit Air has not synced recently\n\n"
+            "Open Fitbit and Health Connect on the phone, then confirm data sharing is active."
         )
 
     try:
@@ -535,6 +508,7 @@ def run_daily_advisor() -> None:
                         "Please check the server logs for details."
                     ),
                     "context_summary": {
+                        "fitbit_available": False,
                         "oura_available": False,
                         "lab_reports_count": 0,
                         "lab_report_types": [],
@@ -550,7 +524,7 @@ def run_daily_advisor() -> None:
 
     if stale_banner:
         advice["advice"] = stale_banner + "\n\n" + advice.get("advice", "")
-        advice.setdefault("context_summary", {})["oura_stale_days"] = freshness["stale_days"]
+        advice.setdefault("context_summary", {})["fitbit_stale_days"] = freshness["stale_days"]
 
     print_advice(advice)
     local_path = save_advice_local(config, advice)
@@ -580,7 +554,7 @@ def run_daily_advisor() -> None:
 
 
 def run_auto_credit_job() -> None:
-    """Auto-credit today's actions from Oura signals (07:42 + inside evening nudge)."""
+    """Auto-credit today's actions from Fitbit Air signals."""
     from datetime import datetime
 
     config = load_config()
@@ -590,7 +564,7 @@ def run_auto_credit_job() -> None:
 
         summary = auto_credit_actions(config, day)
         if summary.get("credited"):
-            print(f"Auto-credited {len(summary['credited'])} action(s) from Oura.")
+            print(f"Auto-credited {len(summary['credited'])} action(s) from Fitbit Air.")
     except Exception as exc:
         print(f"Auto-credit failed (non-fatal): {exc}")
 
@@ -631,7 +605,7 @@ def run_overdue_checkup_alert() -> None:
 
 
 def run_whatsapp_evening_nudge() -> None:
-    """21:00 WhatsApp nudge: auto-credit from Oura first, then ping if still open."""
+    """21:00 WhatsApp nudge: auto-credit from Fitbit Air, then ping if still open."""
     from datetime import datetime
 
     config = load_config()
@@ -641,7 +615,7 @@ def run_whatsapp_evening_nudge() -> None:
         from .auto_complete import auto_credit_actions, render_auto_credit_line
         from .whatsapp_sender import _run_openclaw_send, send_whatsapp_evening_nudge
 
-        # First, sweep Oura one more time (evening data is more complete).
+        # First, sweep Fitbit Air one more time (evening data is more complete).
         summary = auto_credit_actions(config, day.isoformat())
         credit_line = render_auto_credit_line(summary)
 

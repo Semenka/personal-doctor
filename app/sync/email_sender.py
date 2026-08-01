@@ -458,7 +458,7 @@ def send_advice_email(config: SyncConfig, advice: Dict[str, Any]) -> None:
     action_buttons_html = _build_action_buttons_html(config, advice_text, day)
 
     ctx = advice.get("context_summary", {})
-    oura_badge = "Yes" if ctx.get("oura_available") else "No"
+    oura_badge = "Yes" if ctx.get("fitbit_available") else "No"
     lab_types = ", ".join(ctx.get("lab_report_types", [])) or "None"
     scan_count = ctx.get("image_analyses_count", 0)
     scan_info = f" &bull; Image scans: {scan_count}" if scan_count else ""
@@ -479,7 +479,7 @@ def send_advice_email(config: SyncConfig, advice: Dict[str, Any]) -> None:
 <body>
   <h2>Daily Health Plan &mdash; {day}</h2>
   <div class="meta">
-    Oura data: {oura_badge} &bull; Lab reports: {lab_types}{scan_info} &bull; Model: {advice.get('model', 'N/A')}
+    Fitbit Air data: {oura_badge} &bull; Lab reports: {lab_types}{scan_info} &bull; Model: {advice.get('model', 'N/A')}
   </div>
   {best_mover_html}
   {outcomes_html}
@@ -526,7 +526,7 @@ def send_advice_email(config: SyncConfig, advice: Dict[str, Any]) -> None:
 
     plain = (
         f"Daily Health Plan \u2014 {day}\n"
-        f"Oura data: {oura_badge} | Lab reports: {lab_types}\n\n"
+        f"Fitbit Air data: {oura_badge} | Lab reports: {lab_types}\n\n"
         f"{advice_text}\n\n"
         f"{action_links}"
         f"Generated: {advice.get('generated_at', '')}"

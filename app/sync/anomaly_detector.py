@@ -1,6 +1,6 @@
 """Anomaly detector (X1).
 
-Runs right after the Oura sync at 07:41. Catches clinically notable changes
+Runs right after the Fitbit Air sync at 07:41. Catches clinically notable changes
 that would otherwise be buried in tomorrow's email:
 
 - HRV drops >20% week-over-week
@@ -24,9 +24,9 @@ logger = logging.getLogger("personal-doctor.anomaly_detector")
 
 
 def _history(config: SyncConfig, today: date, days: int = 14):
-    from .trend_analyzer import load_oura_history
+    from .trend_analyzer import load_primary_wearable_history
 
-    return load_oura_history(config.data_dir, today, num_days=days)
+    return load_primary_wearable_history(config.data_dir, today, num_days=days)
 
 
 def _week_avg(history, key: str) -> float | None:

@@ -1,6 +1,6 @@
-"""Daily AI health advisor powered by Gemini 3.1 Flash Lite.
+"""Daily AI health advisor.
 
-Gathers Oura Ring data and any available health reports, then asks Gemini
+Gathers Fitbit Air data and any available health reports, then asks the LLM
 to act as a general practitioner focused on maximizing sperm motility and
 conception chances while maintaining high energy levels.
 
@@ -49,12 +49,13 @@ def _gather_context(
         "weekend_mode": day.weekday() in (4, 5),
     }
 
-    # Oura daily data
+    # Fitbit Air is the sole primary wearable source.
     try:
-        oura = load_daily_payload(config, day.isoformat())
-        context["oura"] = oura
+        from .storage import load_wearable_payload_file
+        fitbit = load_wearable_payload_file(config.data_dir, day.isoformat(), source="fitbit")
+        context["fitbit"] = fitbit
     except FileNotFoundError:
-        context["oura"] = None
+        context["fitbit"] = None
 
     # Lab documents (most recent of each kind)
     try:
@@ -98,17 +99,17 @@ def _gather_context(
             compute_metric_trends,
             compute_rolling_averages,
             format_trend_section,
-            load_oura_history,
+            load_primary_wearable_history,
         )
 
-        oura_history = load_oura_history(config.data_dir, day)
-        context["rolling_averages"] = compute_rolling_averages(oura_history)
-        context["metric_trends"] = compute_metric_trends(oura_history)
-        context["oura_history"] = oura_history
+        fitbit_history = load_primary_wearable_history(config.data_dir, day)
+        context["rolling_averages"] = compute_rolling_averages(fitbit_history)
+        context["metric_trends"] = compute_metric_trends(fitbit_history)
+        context["fitbit_history"] = fitbit_history
     except Exception:
         context["rolling_averages"] = {}
         context["metric_trends"] = {}
-        context["oura_history"] = []
+        context["fitbit_history"] = []
 
     # Fresh research papers (PubMed + OpenAlex) — R2
     try:
@@ -160,22 +161,14 @@ def _gather_context(
     except Exception:
         context["biomarker_trends"] = []
 
-    # Two-wearable comparison block (Oura vs Fitbit) — only when Fitbit synced
-    try:
-        from .device_compare import render_compare_advisor_block
-
-        context["device_compare_block"] = render_compare_advisor_block(
-            config, day.isoformat()
-        )
-    except Exception:
-        context["device_compare_block"] = ""
+    context["device_compare_block"] = ""
 
     return context
 
 
 def _build_prompt(context: Dict[str, Any]) -> str:
     """Build the user prompt with today's data, trends, and action history."""
-    oura = context.get("oura")
+    oura = context.get("fitbit")
     labs = context.get("lab_reports", [])
     today = context["date"]
 
@@ -185,7 +178,7 @@ def _build_prompt(context: Dict[str, Any]) -> str:
         if oura.get("activity_is_previous_day"):
             activity_note = " (previous day \u2014 today's not yet available)"
 
-        oura_section = f"""## Today's Oura Ring data ({today})
+        oura_section = f"""## Today's Fitbit Air data ({today})
 **Sleep:**
 - Total sleep: {oura.get('sleep_hours', 'N/A')} hours (score {oura.get('sleep_quality', 'N/A')}/100)
 - Deep sleep: {oura.get('deep_sleep_min', 'N/A')} min
@@ -210,13 +203,13 @@ def _build_prompt(context: Dict[str, Any]) -> str:
 - Sitting hours: {oura.get('sitting_hours', 'N/A')}"""
     elif oura:
         oura_section = (
-            "## Oura Ring data\n"
-            "Oura returned scores but no detailed sleep data for today. "
+            "## Fitbit Air data\n"
+            "Fitbit Air returned partial data but no detailed sleep data for today. "
             f"Sleep score: {oura.get('sleep_quality', 'N/A')}/100, "
             f"Readiness score: {oura.get('readiness_score', 'N/A')}/100."
         )
     else:
-        oura_section = "## Oura Ring data\nNo data available for today."
+        oura_section = "## Fitbit Air data\nNo data available for today."
 
     # ── Lab reports section ──
     if labs:
@@ -583,7 +576,7 @@ Your patient is a man actively trying to conceive. Your primary goals are:
 1. **Maximize sperm motility** and overall sperm quality to increase chances of successful conception.
 2. **Maximize daily energy** so the patient feels sharp, productive, and physically ready.
 
-Every day you receive the patient's wearable data (Oura Ring: sleep, HRV, resting HR, \
+Every day you receive the patient's wearable data (Fitbit Air: sleep, heart rate, activity, \
 activity), any available medical reports (blood tests, sperm analysis, genetic tests, \
 urine tests, doctor conclusions, prescriptions, complete health check-up reports), \
 and AI-assisted analyses of medical images (MRI, X-ray, CT scans) if any are on file.
@@ -731,7 +724,7 @@ cite the number from the input exactly.
 - **[Micro-win 3]** — one-sentence how
 
 ### One metric to watch today
-Single line: the one number to check on the Oura ring tonight, with the target range.
+Single line: the one Fitbit Air number to check tonight, with the target range.
 
 ### What to avoid today
 One concrete thing, tied to today's data.
@@ -804,7 +797,8 @@ def generate_daily_advice(
         "model": model,
         "advice": advice_text,
         "context_summary": {
-            "oura_available": context.get("oura") is not None,
+            "fitbit_available": context.get("fitbit") is not None,
+            "oura_available": False,
             "lab_reports_count": len(context.get("lab_reports", [])),
             "lab_report_types": [
                 lab.get("kind") for lab in context.get("lab_reports", [])
@@ -932,7 +926,7 @@ def print_advice(advice: Dict[str, Any]) -> None:
     print(advice["advice"])
     print(f"\n{'='*60}")
     ctx = advice.get("context_summary", {})
-    print(f"  Oura data: {'Yes' if ctx.get('oura_available') else 'No'}")
+    print(f"  Fitbit Air data: {'Yes' if ctx.get('fitbit_available') else 'No'}")
     if ctx.get("lab_report_types"):
         print(f"  Lab reports used: {', '.join(ctx['lab_report_types'])}")
     if ctx.get("image_analyses_count"):

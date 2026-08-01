@@ -167,12 +167,11 @@ def auto_credit_actions(config: SyncConfig, day: Optional[str] = None) -> Dict[s
     if not actions:
         return result
 
-    oura = _load_oura(config.data_dir, day)
     fitbit = _load_fitbit(config.data_dir, day)
-    if not oura and not fitbit:
+    if not fitbit:
         logger.info(f"auto_credit: no wearable payload for {day} yet")
         return result
-    signals = _merge_activity(oura, fitbit)
+    signals = _merge_activity(None, fitbit)
 
     for a in actions:
         if a.get("done"):
@@ -190,7 +189,7 @@ def auto_credit_actions(config: SyncConfig, day: Optional[str] = None) -> Dict[s
             ok = mark_action_done_with_sheets(config, day, a["idx"])
             # Tag the source on the local JSON so adherence analytics can
             # distinguish auto-credit from manual confirmation.
-            _tag_source(config.data_dir, day, a["idx"], "oura_auto")
+            _tag_source(config.data_dir, day, a["idx"], "fitbit_auto")
             if ok:
                 result["credited"].append(
                     {"idx": a["idx"], "title": title, "evidence": evidence}
