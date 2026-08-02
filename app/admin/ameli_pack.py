@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ..sync.config import SyncConfig
-from .claims import Expense, ClaimDraft, load_drafts, load_expenses, _fmt_eur
+from .claims import Expense, load_drafts, load_expenses, _fmt_eur
 
 # Paris CPAM postal address for feuilles de soins.
 CPAM_PARIS = "CPAM de Paris\n75948 Paris Cedex 19"

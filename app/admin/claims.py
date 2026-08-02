@@ -31,7 +31,7 @@ import json
 import re
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -526,7 +526,22 @@ def render_claims_summary(
         today = date.today()
     rows = unclaimed_expenses(config, today)
     pending = load_drafts(config, status="draft")
-    if not rows and not pending:
+    approved_unsent = load_drafts(config, status="approved")
+
+    # NOEMIE is a standing setup question, not a per-expense one, so it must
+    # survive an empty ledger — which is exactly when it matters most, since it
+    # decides whether Henner expenses ever need logging at all. Returning early
+    # on "no rows" hid it completely.
+    noemie_block = ""
+    try:
+        from .ameli_pack import load_settings, noemie_advice
+
+        if load_settings(config).noemie_active is not True:
+            noemie_block = noemie_advice(config)
+    except Exception:
+        pass
+
+    if not rows and not pending and not approved_unsent and not noemie_block:
         return ""
 
     total = round(sum(r["expense"].outstanding_eur for r in rows), 2)
@@ -534,14 +549,11 @@ def render_claims_summary(
 
     # Surfaced first because it can delete the mutuelle workflow outright,
     # which is worth more than any speed-up downstream of it.
-    try:
-        from .ameli_pack import load_settings, noemie_advice
-
-        if load_settings(config).noemie_active is not True:
-            lines.append(noemie_advice(config))
-            lines.append("")
-    except Exception:
-        pass
+    if noemie_block:
+        lines.append(noemie_block)
+        lines.append("")
+    if not rows and not pending and not approved_unsent:
+        lines.append("_No out-of-pocket expenses logged yet._")
     if rows:
         lines.append(
             f"**{_fmt_eur(total)} outstanding** across {len(rows)} unclaimed item(s)."
@@ -570,11 +582,10 @@ def render_claims_summary(
 
     # Approved but not yet sent — otherwise a claim can stall here unnoticed,
     # which is the same silent failure the whole ledger exists to prevent.
-    approved = [d for d in load_drafts(config, status="approved")]
-    if approved:
+    if approved_unsent:
         lines.append("")
-        lines.append(f"**{len(approved)} approved, not yet sent:**")
-        for d in approved:
+        lines.append(f"**{len(approved_unsent)} approved, not yet sent:**")
+        for d in approved_unsent:
             if d.channel == "email":
                 lines.append(
                     f"- `{d.id}` {_fmt_eur(d.total_eur)} → run "
