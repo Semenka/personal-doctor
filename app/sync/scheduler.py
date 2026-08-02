@@ -574,32 +574,68 @@ def run_overdue_checkup_alert() -> None:
     from datetime import datetime
 
     config = load_config()
+    today = datetime.now(tz=config.timezone).date()
     try:
-        from .checkup_schedule import upcoming_lab_visits
+        from .checkup_schedule import (
+            PRIMARY_LAB,
+            PRIMARY_LAB_ADDRESS,
+            overdue_lab_visits,
+            reconcile_schedule_with_results,
+            upcoming_lab_visits,
+        )
         from .whatsapp_sender import _run_openclaw_send
 
-        overdue = upcoming_lab_visits(config, within_days=0)  # due or overdue
-        upcoming = upcoming_lab_visits(config, within_days=7)
-        # upcoming includes overdue; keep only the not-yet-due slice for the
-        # "coming up" section.
-        overdue_keys = {v.get("date") + (v.get("label") or "") for v in overdue}
-        soon = [
-            v for v in upcoming
-            if (v.get("date") + (v.get("label") or "")) not in overdue_keys
-        ]
+        # Roll forward anything the ingested results prove was done, so we
+        # never nag about a test whose report is already on file.
+        reconciled = reconcile_schedule_with_results(config, today)
+        if reconciled:
+            print(f"Checkup schedule reconciled from results: {', '.join(reconciled)}")
+
+        # upcoming_lab_visits only looks forward — overdue items need their
+        # own query or they are invisible (they were, for months).
+        overdue = overdue_lab_visits(config, today)
+        soon = upcoming_lab_visits(config, within_days=7, today=today)
         if not overdue and not soon:
             return
+
+        # Throttle the overdue block to twice a week: with many items overdue
+        # a daily wall of ⚠️ lines trains the user to ignore the channel.
+        marker = config.data_dir / "checkups" / ".overdue_alert.json"
+        send_overdue = bool(overdue)
+        if send_overdue and marker.exists():
+            try:
+                import json as _json
+                last = date.fromisoformat(
+                    _json.loads(marker.read_text()).get("last_sent", "1970-01-01")
+                )
+                send_overdue = (today - last).days >= 3
+            except Exception:
+                pass
+        if not send_overdue and not soon:
+            return
+
         lines = ["🧪 Lab check-ups"]
-        for v in overdue:
-            slip = " · ".join(v.get("panels", [])[:4])
-            lines.append(f"⚠️ OVERDUE ({v['date']}): {v.get('label','')}")
-            if slip:
-                lines.append(f"   slip: {slip}")
+        if send_overdue:
+            for v in overdue[:6]:
+                lines.append(
+                    f"⚠️ OVERDUE {v['days_overdue']}d: {v.get('name', v.get('key', ''))}"
+                )
+                if v.get("lab_panel_name"):
+                    lines.append(f"   slip: {v['lab_panel_name']}")
+            if len(overdue) > 6:
+                lines.append(f"   …and {len(overdue) - 6} more overdue")
+            lines.append(f"🏥 {PRIMARY_LAB} — {PRIMARY_LAB_ADDRESS}")
         for v in soon:
-            lines.append(f"📅 Due {v['date']}: {v.get('label','')}")
-        msg = "\n".join(lines)
-        _run_openclaw_send(msg)
-        print(f"Overdue checkup alert sent ({len(overdue)} overdue, {len(soon)} soon).")
+            lines.append(f"📅 Due {v['date']}: {v.get('label', '')}")
+        _run_openclaw_send("\n".join(lines))
+        if send_overdue:
+            import json as _json
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(_json.dumps({"last_sent": today.isoformat()}))
+        print(
+            f"Overdue checkup alert sent ({len(overdue)} overdue, {len(soon)} soon, "
+            f"overdue block {'included' if send_overdue else 'throttled'})."
+        )
     except Exception as exc:
         print(f"Overdue checkup alert failed (non-fatal): {exc}")
 

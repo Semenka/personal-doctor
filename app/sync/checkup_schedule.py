@@ -360,6 +360,128 @@ def compute_next_due_dates(
     return out
 
 
+def _add_months(d: date, months: int) -> date:
+    """Calendar-safe month addition (clamps day, e.g. Jan 31 + 1m → Feb 28)."""
+    month_index = d.month - 1 + months
+    year = d.year + month_index // 12
+    month = month_index % 12 + 1
+    # Clamp to the last valid day of the target month.
+    for day_of_month in (d.day, 30, 29, 28):
+        try:
+            return date(year, month, day_of_month)
+        except ValueError:
+            continue
+    return date(year, month, 28)
+
+
+# Which ingested result files satisfy which checkup. A new sperm_test_*.json
+# proves the spermogram was done; blood_test_*.json plausibly covers the
+# blood-drawn panels (the lab slip bundles them, so one draw satisfies the
+# bundle it was ordered for). Specialist visits (dental, ECG, …) have no
+# ingested artifact and are reconciled only by the user doing them.
+_RESULT_FILE_PREFIXES: Dict[str, List[str]] = {
+    "sperm_analysis": ["sperm_test_"],
+    "hormone_panel": ["blood_test_"],
+    "lipid_advanced": ["blood_test_"],
+    "glycemic": ["blood_test_"],
+    "homocysteine": ["blood_test_"],
+    "vit_d": ["blood_test_"],
+    "iron": ["blood_test_"],
+    "omega3_index": ["blood_test_"],
+    "micronutrients": ["blood_test_"],
+    "hs_crp": ["blood_test_"],
+    "psa": ["blood_test_"],
+    "cbc_cmp": ["blood_test_"],
+    "thyroid": ["blood_test_"],
+}
+
+
+def latest_result_date(config: SyncConfig, key: str) -> Optional[date]:
+    """Most recent ingested result date that satisfies checkup ``key``."""
+    prefixes = _RESULT_FILE_PREFIXES.get(key)
+    if not prefixes:
+        return None
+    best: Optional[date] = None
+    for prefix in prefixes:
+        for f in config.data_dir.glob(f"{prefix}*.json"):
+            raw = f.stem[len(prefix):]
+            try:
+                d = date.fromisoformat(raw)
+            except ValueError:
+                continue
+            if best is None or d > best:
+                best = d
+    return best
+
+
+def reconcile_schedule_with_results(
+    config: SyncConfig, today: date | None = None
+) -> List[str]:
+    """Roll next_due forward for checkups the ingested results prove were done.
+
+    The original design computed next_due once (compute_next_due_dates) and
+    never updated it — and the query helpers drop dates in the past — so the
+    moment a due date slipped by, the item vanished from every alert forever.
+    This walks the schedule daily: if a matching result file is dated on/after
+    the start of the current cycle, the test happened and next_due becomes
+    result date + cadence. Items with no newer result stay overdue — visibly.
+
+    Returns the list of keys whose next_due changed. Persists via
+    save_schedule only when something changed.
+    """
+    if today is None:
+        today = date.today()
+    items = load_schedule(config)
+    changed: List[str] = []
+    for item in items:
+        raw_due = item.get("next_due")
+        cadence = item.get("cadence_months")
+        if not raw_due or not cadence:
+            continue
+        try:
+            due = date.fromisoformat(raw_due)
+        except ValueError:
+            continue
+        last = latest_result_date(config, item.get("key", ""))
+        if last is None:
+            continue
+        # A result on/after the start of the current cycle satisfies it.
+        cycle_start = _add_months(due, -int(cadence))
+        if last >= cycle_start and _add_months(last, int(cadence)) > due:
+            item["next_due"] = _add_months(last, int(cadence)).isoformat()
+            changed.append(item.get("key", ""))
+    if changed:
+        path = _schedule_dir(config.data_dir) / "schedule.json"
+        path.write_text(json.dumps(items, indent=2, ensure_ascii=False))
+    return changed
+
+
+def overdue_lab_visits(
+    config: SyncConfig, today: date | None = None
+) -> List[Dict[str, Any]]:
+    """All checkups (specialist visits included) whose next_due has passed.
+
+    The companion to upcoming_lab_visits, which only looks forward — without
+    this, an overdue item is invisible to every alert. Sorted most-overdue
+    first; each entry carries days_overdue.
+    """
+    if today is None:
+        today = date.today()
+    out: List[Dict[str, Any]] = []
+    for item in load_schedule(config):
+        raw_due = item.get("next_due")
+        if not raw_due:
+            continue
+        try:
+            due = date.fromisoformat(raw_due)
+        except ValueError:
+            continue
+        if due < today:
+            out.append({**item, "days_overdue": (today - due).days})
+    out.sort(key=lambda x: -x["days_overdue"])
+    return out
+
+
 def upcoming_lab_visits(
     config: SyncConfig, within_days: int = 30, today: date | None = None
 ) -> List[Dict[str, Any]]:
