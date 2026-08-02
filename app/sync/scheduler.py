@@ -54,6 +54,13 @@ def start_scheduler() -> None:
     # Sunday 18:00 — Weekly retrospective (I4)
     scheduler.add_job(run_weekly_retro_job, "cron", day_of_week="sun", hour=18, minute=0,
                       id="weekly_retro", misfire_grace_time=7200)
+    # Sunday 18:15 — Weekly journal review (reads the week's fetched papers)
+    scheduler.add_job(run_journal_watch_job, "cron", day_of_week="sun", hour=18, minute=15,
+                      id="journal_watch_weekly", misfire_grace_time=7200)
+    # Sunday 18:30 — Health OS brief. Last, so it can include the fresh
+    # journal review and any claims drafted along the way.
+    scheduler.add_job(run_health_os_brief_job, "cron", day_of_week="sun", hour=18, minute=30,
+                      id="health_os_brief", misfire_grace_time=7200)
 
     scheduler.start()
     print(
@@ -64,8 +71,11 @@ def start_scheduler() -> None:
         "  07:41  Anomaly detector\n"
         "  07:45  Supplement inventory check\n"
         "  08:00  AI daily advisor → email + WhatsApp\n"
+        "  08:05  Check-up reconcile + overdue alert\n"
         "  21:00  WhatsApp evening nudge (if actions still open)\n"
-        "  Sun 18:00  Weekly retrospective"
+        "  Sun 18:00  Weekly retrospective\n"
+        "  Sun 18:15  Journal watch (weekly literature review)\n"
+        "  Sun 18:30  Health OS brief → email + WhatsApp"
     )
 
 
@@ -94,6 +104,43 @@ def run_weekly_retro_job() -> None:
         run_weekly_retro()
     except Exception as exc:
         print(f"Weekly retro failed: {exc}")
+
+
+def run_journal_watch_job() -> None:
+    """Sun 18:15 — review the week's fetched papers against the user's goals."""
+    from datetime import datetime
+
+    config = load_config()
+    try:
+        from ..research.journal_watch import run_journal_watch
+
+        day = datetime.now(tz=config.timezone).date()
+        out = run_journal_watch(config, day)
+        print(
+            f"Journal watch: {out['papers_reviewed']} papers reviewed "
+            f"(model={out['model']})."
+        )
+    except Exception as exc:
+        print(f"Journal watch failed (non-fatal): {exc}")
+
+
+def run_health_os_brief_job() -> None:
+    """Sun 18:30 — assemble and deliver the weekly Health OS brief."""
+    from datetime import datetime
+
+    config = load_config()
+    try:
+        from .health_os_brief import run_health_os_brief
+
+        day = datetime.now(tz=config.timezone).date()
+        out = run_health_os_brief(config, day)
+        delivered = out.get("delivered", {})
+        print(
+            f"Health OS brief sent (email={delivered.get('email')}, "
+            f"whatsapp={delivered.get('whatsapp')})."
+        )
+    except Exception as exc:
+        print(f"Health OS brief failed (non-fatal): {exc}")
 
     try:
         while True:

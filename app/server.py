@@ -239,6 +239,8 @@ def start_server():
         run_daily_advisor,
         run_fitbit_sync,
         run_gdrive_sync,
+        run_health_os_brief_job,
+        run_journal_watch_job,
         run_overdue_checkup_alert,
         run_research_sync,
         run_supplement_check_job,
@@ -270,6 +272,11 @@ def start_server():
                       id="evening_nudge", misfire_grace_time=3600)
     scheduler.add_job(run_weekly_retro_job, "cron", day_of_week="sun", hour=18, minute=0,
                       id="weekly_retro", misfire_grace_time=7200)
+    # Sun 18:15 journal review, then 18:30 the Health OS brief that reads it.
+    scheduler.add_job(run_journal_watch_job, "cron", day_of_week="sun", hour=18, minute=15,
+                      id="journal_watch_weekly", misfire_grace_time=7200)
+    scheduler.add_job(run_health_os_brief_job, "cron", day_of_week="sun", hour=18, minute=30,
+                      id="health_os_brief", misfire_grace_time=7200)
     scheduler.start()
 
     # Boot-time self-check: log loud warnings if WhatsApp delivery or Fitbit Air
