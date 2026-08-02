@@ -24,7 +24,23 @@ from .openalex import fetch_top_papers
 from .pubmed import fetch_papers_for_query
 from ..sync.config import SyncConfig
 
-JOURNALS = ["The Lancet", "The New England Journal of Medicine", "JAMA"]
+# General top-tier journals plus the specialist ones that actually move the
+# user's two goals (fertility: andrology/reproduction; energy: sleep/endocrine).
+# A generalist-only list surfaces prestige papers with no bearing on either.
+JOURNALS = [
+    "The Lancet",
+    "The New England Journal of Medicine",
+    "JAMA",
+    "BMJ",
+    "Nature Medicine",
+    "Human Reproduction",
+    "Human Reproduction Update",
+    "Fertility and Sterility",
+    "Andrology",
+    "European Urology",
+    "Sleep",
+    "The Journal of Clinical Endocrinology & Metabolism",
+]
 
 # Actions map each goal → a specific protocol (short-form, used as the
 # recommendation "action" text). Keep this in sync with goals.py keys.
