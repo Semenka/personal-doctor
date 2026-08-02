@@ -59,6 +59,12 @@ def main(argv: list[str] | None = None) -> int:
     sd = sub.add_parser("send", help="send an APPROVED claim (refuses otherwise)")
     sd.add_argument("claim_id")
 
+    pk = sub.add_parser("pack", help="build the Ameli submission pack for a claim")
+    pk.add_argument("claim_id")
+
+    nm = sub.add_parser("noemie", help="record Ameli-Henner teletransmission status")
+    nm.add_argument("state", choices=["yes", "no", "unknown"])
+
     m = sub.add_parser("mark", help="update reimbursement state of an expense")
     m.add_argument("expense_id")
     m.add_argument("--ameli", default=None)
@@ -135,6 +141,28 @@ def main(argv: list[str] | None = None) -> int:
         d = reject_draft(config, args.claim_id, args.reason)
         print(f"Rejected {d.id}" if d else f"No draft {args.claim_id}")
         return 0 if d else 1
+
+    if args.cmd == "pack":
+        from .ameli_pack import build_submission_pack
+
+        try:
+            res = build_submission_pack(config, args.claim_id, today)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(res["markdown"])
+        print(f"\n(saved to {res['path']})")
+        return 0
+
+    if args.cmd == "noemie":
+        from .ameli_pack import load_settings, noemie_advice, save_settings
+
+        s = load_settings(config)
+        s.noemie_active = {"yes": True, "no": False, "unknown": None}[args.state]
+        s.noemie_checked = today.isoformat()
+        save_settings(config, s)
+        print(noemie_advice(config))
+        return 0
 
     if args.cmd == "send":
         try:

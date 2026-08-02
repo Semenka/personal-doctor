@@ -531,6 +531,17 @@ def render_claims_summary(
 
     total = round(sum(r["expense"].outstanding_eur for r in rows), 2)
     lines = ["## 💶 Reimbursements"]
+
+    # Surfaced first because it can delete the mutuelle workflow outright,
+    # which is worth more than any speed-up downstream of it.
+    try:
+        from .ameli_pack import load_settings, noemie_advice
+
+        if load_settings(config).noemie_active is not True:
+            lines.append(noemie_advice(config))
+            lines.append("")
+    except Exception:
+        pass
     if rows:
         lines.append(
             f"**{_fmt_eur(total)} outstanding** across {len(rows)} unclaimed item(s)."
