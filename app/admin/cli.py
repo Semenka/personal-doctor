@@ -19,6 +19,7 @@ from datetime import date
 
 from ..sync.config import load_config
 from .claims import (
+    ClaimNotApproved,
     add_expense,
     approve_draft,
     build_pending_claims,
@@ -27,6 +28,7 @@ from .claims import (
     reject_draft,
     render_claims_summary,
     save_expenses,
+    send_approved_claim,
     unclaimed_expenses,
 )
 
@@ -53,6 +55,9 @@ def main(argv: list[str] | None = None) -> int:
 
     rj = sub.add_parser("reject", help="reject a claim draft")
     rj.add_argument("claim_id"); rj.add_argument("reason", nargs="?", default="")
+
+    sd = sub.add_parser("send", help="send an APPROVED claim (refuses otherwise)")
+    sd.add_argument("claim_id")
 
     m = sub.add_parser("mark", help="update reimbursement state of an expense")
     m.add_argument("expense_id")
@@ -130,6 +135,19 @@ def main(argv: list[str] | None = None) -> int:
         d = reject_draft(config, args.claim_id, args.reason)
         print(f"Rejected {d.id}" if d else f"No draft {args.claim_id}")
         return 0 if d else 1
+
+    if args.cmd == "send":
+        try:
+            res = send_approved_claim(config, args.claim_id)
+        except ClaimNotApproved as exc:
+            print(f"REFUSED: {exc}", file=sys.stderr)
+            return 1
+        d = res["draft"]
+        if res["sent"]:
+            print(f"SENT {d.id} → {d.recipient} ({d.total_eur:.2f}€) at {d.sent_at}")
+            return 0
+        print(f"NOT SENT ({res['reason']})", file=sys.stderr)
+        return 1
 
     if args.cmd == "mark":
         expenses = load_expenses(config)

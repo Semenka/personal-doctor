@@ -366,6 +366,114 @@ def reject_draft(config: SyncConfig, draft_id: str, reason: str = "") -> Optiona
     return None
 
 
+class ClaimNotApproved(RuntimeError):
+    """Raised when something tries to send a claim the user hasn't approved."""
+
+
+def send_approved_claim(config: SyncConfig, draft_id: str) -> Dict[str, Any]:
+    """Send ONE claim that the user has already approved. Never called by a job.
+
+    The approval gate is enforced here, not by the caller: this refuses any
+    draft whose status is not exactly "approved". That way the check can't be
+    forgotten at a call site, and no scheduled code path can reach a send —
+    only an explicit human `approve` followed by an explicit human `send`.
+
+    Ameli claims are refused outright: their channel is portal_manual because
+    submitting on ameli.fr needs the user's government-portal credentials,
+    which this codebase does not handle.
+    """
+    draft = next((d for d in load_drafts(config) if d.id == draft_id), None)
+    if draft is None:
+        raise ClaimNotApproved(f"No claim {draft_id}")
+    if draft.status == "sent":
+        return {"sent": False, "reason": "already sent", "draft": draft}
+    if draft.status != "approved":
+        raise ClaimNotApproved(
+            f"Claim {draft_id} is status={draft.status!r}, not 'approved'. "
+            f"Run `approve {draft_id}` first — claims are never auto-sent."
+        )
+    if draft.channel != "email":
+        return {
+            "sent": False,
+            "reason": (
+                f"channel={draft.channel} — {draft.recipient} must be submitted "
+                "manually; see the instructions on the draft."
+            ),
+            "draft": draft,
+        }
+    if not config.smtp_host:
+        return {"sent": False, "reason": "SMTP_HOST not configured", "draft": draft}
+
+    missing = [p for p in draft.attachments if not Path(p).exists()]
+    if missing:
+        return {
+            "sent": False,
+            "reason": f"missing receipt file(s): {', '.join(missing)}",
+            "draft": draft,
+        }
+
+    import mimetypes
+    import smtplib
+    import ssl
+    from email.mime.base import MIMEBase
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+    from email import encoders
+
+    msg = MIMEMultipart()
+    msg["Subject"] = draft.subject
+    msg["From"] = config.smtp_user or f"health@{config.smtp_host}"
+    msg["To"] = draft.recipient
+    if config.email_to:
+        msg["Cc"] = config.email_to  # keep the user's own copy of what was filed
+    msg.attach(MIMEText(draft.body, "plain", "utf-8"))
+
+    for path_str in draft.attachments:
+        p = Path(path_str)
+        ctype, _ = mimetypes.guess_type(p.name)
+        maintype, subtype = (ctype or "application/octet-stream").split("/", 1)
+        part = MIMEBase(maintype, subtype)
+        part.set_payload(p.read_bytes())
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition", "attachment", filename=p.name)
+        msg.attach(part)
+
+    recipients = [draft.recipient] + ([config.email_to] if config.email_to else [])
+    port = config.smtp_port or 465
+    ctx = ssl.create_default_context()
+    if port == 465:
+        with smtplib.SMTP_SSL(config.smtp_host, port, context=ctx, timeout=30) as s:
+            if config.smtp_user and config.smtp_password:
+                s.login(config.smtp_user, config.smtp_password)
+            s.sendmail(msg["From"], recipients, msg.as_string())
+    else:
+        with smtplib.SMTP(config.smtp_host, port, timeout=30) as s:
+            s.ehlo()
+            if port != 25:
+                s.starttls(context=ctx)
+                s.ehlo()
+            if config.smtp_user and config.smtp_password:
+                s.login(config.smtp_user, config.smtp_password)
+            s.sendmail(msg["From"], recipients, msg.as_string())
+
+    draft.status = "sent"
+    draft.sent_at = datetime.now().isoformat(timespec="seconds")
+    save_draft(config, draft)
+
+    # Record on the ledger that the mutuelle claim is filed, so the same
+    # expenses aren't drafted again next week.
+    expenses = load_expenses(config)
+    for e in expenses:
+        if e.id in draft.expense_ids:
+            if draft.target == "henner":
+                e.mutuelle_status = "claimed"
+            elif draft.target == "ameli":
+                e.ameli_status = "claimed"
+    save_expenses(config, expenses)
+
+    return {"sent": True, "reason": "", "draft": draft}
+
+
 def build_pending_claims(
     config: SyncConfig, today: Optional[date] = None
 ) -> List[ClaimDraft]:
@@ -444,5 +552,26 @@ def render_claims_summary(
             where = "email to Henner" if d.target == "henner" else "manual on ameli.fr"
             lines.append(f"- `{d.id}` → {where}, {_fmt_eur(d.total_eur)}")
         lines.append("")
-        lines.append("Nothing is sent until you approve it.")
+        lines.append(
+            "Nothing is sent until you approve it: "
+            "`python -m app.admin.cli show <id>` then `approve <id>`."
+        )
+
+    # Approved but not yet sent — otherwise a claim can stall here unnoticed,
+    # which is the same silent failure the whole ledger exists to prevent.
+    approved = [d for d in load_drafts(config, status="approved")]
+    if approved:
+        lines.append("")
+        lines.append(f"**{len(approved)} approved, not yet sent:**")
+        for d in approved:
+            if d.channel == "email":
+                lines.append(
+                    f"- `{d.id}` {_fmt_eur(d.total_eur)} → run "
+                    f"`python -m app.admin.cli send {d.id}`"
+                )
+            else:
+                lines.append(
+                    f"- `{d.id}` {_fmt_eur(d.total_eur)} → submit on {d.recipient} "
+                    "yourself (see the draft's instructions)"
+                )
     return "\n".join(lines)
