@@ -218,13 +218,19 @@ def send_via_email_fallback(config: SyncConfig, subject: str, body: str) -> bool
         msg["To"] = config.email_to
         port = config.smtp_port or 465
         ctx = ssl.create_default_context()
+        # smtplib defaults to the global socket timeout, which is None — a
+        # stalled connection would block this scheduled job forever and hold
+        # an APScheduler worker thread indefinitely.
+        timeout_s = 30
         if port == 465:
-            with smtplib.SMTP_SSL(config.smtp_host, port, context=ctx) as s:
+            with smtplib.SMTP_SSL(
+                config.smtp_host, port, context=ctx, timeout=timeout_s
+            ) as s:
                 if config.smtp_user and config.smtp_password:
                     s.login(config.smtp_user, config.smtp_password)
                 s.sendmail(msg["From"], [config.email_to], msg.as_string())
         else:
-            with smtplib.SMTP(config.smtp_host, port) as s:
+            with smtplib.SMTP(config.smtp_host, port, timeout=timeout_s) as s:
                 s.ehlo()
                 if port != 25:
                     s.starttls(context=ctx)

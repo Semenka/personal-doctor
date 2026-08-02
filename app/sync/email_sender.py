@@ -537,15 +537,21 @@ def send_advice_email(config: SyncConfig, advice: Dict[str, Any]) -> None:
     context = ssl.create_default_context()
     smtp_port = config.smtp_port or 465
 
+    # Without an explicit timeout smtplib inherits the global socket timeout
+    # (None), so a stalled SMTP connection blocks the 08:00 advisor job forever.
+    smtp_timeout_s = 30
+
     if smtp_port == 465:
         # SSL connection (Yahoo, etc.)
-        with smtplib.SMTP_SSL(config.smtp_host, smtp_port, context=context) as server:
+        with smtplib.SMTP_SSL(
+            config.smtp_host, smtp_port, context=context, timeout=smtp_timeout_s
+        ) as server:
             if config.smtp_user and config.smtp_password:
                 server.login(config.smtp_user, config.smtp_password)
             server.sendmail(msg["From"], [config.email_to], msg.as_string())
     else:
         # STARTTLS connection (Gmail on 587, etc.)
-        with smtplib.SMTP(config.smtp_host, smtp_port) as server:
+        with smtplib.SMTP(config.smtp_host, smtp_port, timeout=smtp_timeout_s) as server:
             server.ehlo()
             if smtp_port != 25:
                 server.starttls(context=context)

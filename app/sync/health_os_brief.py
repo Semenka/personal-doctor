@@ -275,6 +275,11 @@ def run_health_os_brief(config: SyncConfig, today: date) -> Dict[str, Any]:
 
     result = build_brief(config, today)
     result["delivered"] = send_brief(config, result)
+    # build_brief persists latest.json before delivery is known, so rewrite it
+    # — otherwise the stored record always claims delivery is unknown.
+    (_brief_dir(config) / "latest.json").write_text(
+        json.dumps(result, indent=2, ensure_ascii=False)
+    )
     return result
 
 
