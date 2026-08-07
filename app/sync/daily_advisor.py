@@ -166,6 +166,47 @@ def _gather_context(
     return context
 
 
+# Kept as a name because an f-string expression may not contain a backslash.
+_DEG_C = "°C"
+
+
+def _measured(value: Any, unit: str = "") -> str:
+    """Render a wearable metric, distinguishing "not measured" from a real zero.
+
+    The Fitbit Air reports only a subset of metrics (HRV, resting HR and SpO2
+    never propagate through the Health Connect bridge), and the 07:40 sync often
+    runs before the phone has uploaded last night. Both cases reach the prompt as
+    0 — and "HRV: 0.0 ms" or "Sleep score: 0/100" reads to the model as a
+    catastrophic reading rather than an absent one.
+    """
+    if value is None or value == "":
+        return "not measured"
+    try:
+        if float(value) == 0:
+            return "not measured"
+    except (TypeError, ValueError):
+        return str(value)
+    return f"{value}{unit}"
+
+
+def _last_measured(
+    history: Any, key: str, exclude_date: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """Most recent day in history carrying a real (non-zero) value for `key`.
+
+    `exclude_date` skips the running day, whose totals are still accumulating.
+    """
+    for day_data in reversed(list(history or [])):
+        if exclude_date and day_data.get("_date") == exclude_date:
+            continue
+        try:
+            if float(day_data.get(key) or 0) > 0:
+                return day_data
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 def _build_prompt(context: Dict[str, Any]) -> str:
     """Build the user prompt with today's data, trends, and action history."""
     oura = context.get("fitbit")
@@ -180,34 +221,71 @@ def _build_prompt(context: Dict[str, Any]) -> str:
 
         oura_section = f"""## Today's Fitbit Air data ({today})
 **Sleep:**
-- Total sleep: {oura.get('sleep_hours', 'N/A')} hours (score {oura.get('sleep_quality', 'N/A')}/100)
-- Deep sleep: {oura.get('deep_sleep_min', 'N/A')} min
-- REM sleep: {oura.get('rem_sleep_min', 'N/A')} min
-- Light sleep: {oura.get('light_sleep_min', 'N/A')} min
-- Efficiency: {oura.get('efficiency', 'N/A')}%
+- Total sleep: {_measured(oura.get('sleep_hours'), ' hours')} (score {_measured(oura.get('sleep_quality'), '/100')})
+- Deep sleep: {_measured(oura.get('deep_sleep_min'), ' min')}
+- REM sleep: {_measured(oura.get('rem_sleep_min'), ' min')}
+- Light sleep: {_measured(oura.get('light_sleep_min'), ' min')}
+- Efficiency: {_measured(oura.get('efficiency'), '%')}
 
 **Heart & Recovery:**
-- Resting heart rate: {oura.get('resting_hr', 'N/A')} bpm
-- Average heart rate (sleep): {oura.get('avg_hr', 'N/A')} bpm
-- Heart rate variability (HRV): {oura.get('hrv', 'N/A')} ms
-- Average breathing rate: {oura.get('avg_breath', 'N/A')} breaths/min
-- Readiness score: {oura.get('readiness_score', 'N/A')}/100
-- Temperature deviation: {oura.get('temp_deviation', 'N/A')}\u00b0C
+- Resting heart rate: {_measured(oura.get('resting_hr'), ' bpm')}
+- Average heart rate (sleep): {_measured(oura.get('avg_hr'), ' bpm')}
+- Heart rate variability (HRV): {_measured(oura.get('hrv'), ' ms')}
+- Average breathing rate: {_measured(oura.get('avg_breath'), ' breaths/min')}
+- Readiness score: {_measured(oura.get('readiness_score'), '/100')}
+- Temperature deviation: {_measured(oura.get('temp_deviation'), _DEG_C)}
 
 **Activity{activity_note}:**
-- Steps: {oura.get('steps', 'N/A')}
-- Active minutes: {oura.get('active_minutes', 'N/A')}
-- Active calories: {oura.get('active_calories', 'N/A')}
-- Total calories: {oura.get('calories', 'N/A')}
-- Activity score: {oura.get('activity_score', 'N/A')}/100
-- Sitting hours: {oura.get('sitting_hours', 'N/A')}"""
+- Steps: {_measured(oura.get('steps'))}
+- Active minutes: {_measured(oura.get('active_minutes'))}
+- Active calories: {_measured(oura.get('active_calories'))}
+- Total calories: {_measured(oura.get('calories'))}
+- Activity score: {_measured(oura.get('activity_score'), '/100')}
+- Sitting hours: {_measured(oura.get('sitting_hours'))}
+
+"not measured" means no reading reached this pipeline \u2014 treat it as unknown, never as a low or zero value, and do not build advice on it."""
     elif oura:
-        oura_section = (
-            "## Fitbit Air data\n"
-            "Fitbit Air returned partial data but no detailed sleep data for today. "
-            f"Sleep score: {oura.get('sleep_quality', 'N/A')}/100, "
-            f"Readiness score: {oura.get('readiness_score', 'N/A')}/100."
+        # Partial day: the 07:40 sync ran before the phone uploaded last night.
+        # Report what genuinely exists (yesterday is complete) instead of
+        # printing "Sleep score: 0/100", which reads as a terrible night.
+        history = context.get("fitbit_history") or []
+        parts = [
+            "## Fitbit Air data",
+            f"Last night's sleep has NOT synced yet for {today} \u2014 the morning "
+            "sync runs before the phone uploads. This is missing data, not a "
+            "zero. Do not describe today's sleep, HRV or readiness as low.",
+        ]
+
+        night = _last_measured(history, "sleep_hours")
+        if night:
+            parts.append(
+                f"\n**Most recent measured night ({night.get('_date')}):** "
+                f"{_measured(night.get('sleep_hours'), ' hours')} sleep, "
+                f"deep {_measured(night.get('deep_sleep_min'), ' min')}, "
+                f"REM {_measured(night.get('rem_sleep_min'), ' min')}."
+            )
+
+        active = _last_measured(history, "steps", exclude_date=today)
+        if active:
+            parts.append(
+                f"\n**Last complete activity day ({active.get('_date')}):** "
+                f"{_measured(active.get('steps'))} steps, "
+                f"{_measured(active.get('active_minutes'), ' active min')}."
+            )
+        so_far = oura.get("steps")
+        if so_far:
+            parts.append(
+                f"\n**So far today:** {_measured(so_far)} steps "
+                "(partial — the day is still in progress; never read this as a "
+                "low day)."
+            )
+
+        parts.append(
+            "\nThis setup never reports HRV, resting HR or SpO2 \u2014 the Health "
+            "Connect bridge relays activity and sleep only. Do not ask the user "
+            "to check those, and do not infer recovery from their absence."
         )
+        oura_section = "\n".join(parts)
     else:
         oura_section = "## Fitbit Air data\nNo data available for today."
 

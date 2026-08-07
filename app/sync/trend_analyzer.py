@@ -191,15 +191,31 @@ def format_trend_section(
         ("sleep_quality", "avg_sleep_quality", "Sleep Score", "/100"),
     ]
 
+    unmeasured = False
     for src_key, avg_key, label, unit in display:
         avg_val = averages.get(avg_key)
         if avg_val is None:
             continue
-        today_val = today_data.get(src_key, "N/A") if today_data else "N/A"
+        raw_today = today_data.get(src_key) if today_data else None
         trend_dir = trends.get(src_key, "N/A")
+        # A missing metric arrives here as 0. Printing "today 0.0 hrs" tells the
+        # model the user slept zero hours, when in truth the 07:40 sync ran
+        # before the phone uploaded the night. The averages and trend directions
+        # already skip zeros; only this line was still asserting them.
+        if raw_today in (None, "", 0, 0.0):
+            unmeasured = True
+            today_str = "today not yet measured"
+        else:
+            today_str = f"today {raw_today} {unit}".rstrip()
         lines.append(
-            f"- {label}: today {today_val} {unit}, "
-            f"7-day avg {avg_val:.1f} {unit} ({trend_dir})"
+            f"- {label}: {today_str}, 7-day avg {avg_val:.1f} {unit} ({trend_dir})"
+        )
+
+    if unmeasured:
+        lines.append(
+            "(\"not yet measured\" = no reading had synced when this ran — "
+            "it is an absent value, NOT a zero reading. The 7-day average and "
+            "trend for that metric exclude unmeasured days.)"
         )
 
     return "\n".join(lines)
