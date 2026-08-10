@@ -396,6 +396,58 @@ _RESULT_FILE_PREFIXES: Dict[str, List[str]] = {
 }
 
 
+# A result artifact is only evidence that a test happened if the ingest
+# actually pulled something out of it. Scans that OCR'd to nothing are the
+# common failure, and they used to satisfy a checkup on filename alone.
+_MIN_RESULT_TEXT_CHARS = 200
+
+# The filename date falls back to the *ingestion* date when no date could be
+# read out of the document. Backfilling a 2018 scan from Drive therefore files
+# it under today. If Drive says the file predates its filename date by more
+# than this, believe Drive: it is an old report being imported, not a new one.
+_RESULT_BACKFILL_SLACK_DAYS = 180
+
+
+def _result_date_if_real(path: Path, prefix: str) -> Optional[date]:
+    """The date a result file proves a test happened on, or None.
+
+    Returns None when the artifact carries no extracted content, so an empty
+    OCR pass cannot roll a checkup forward a whole cadence.
+    """
+    raw = path.stem[len(prefix):]
+    try:
+        # Drive-backed reports include a file-ID suffix so multiple
+        # reports from one day cannot overwrite each other.
+        filed = date.fromisoformat(raw[:10])
+    except ValueError:
+        return None
+
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    biomarkers = payload.get("biomarkers")
+    n_biomarkers = payload.get("biomarker_count")
+    if not isinstance(n_biomarkers, int):
+        n_biomarkers = len(biomarkers) if isinstance(biomarkers, (list, dict)) else 0
+    text = payload.get("text") or ""
+    if n_biomarkers <= 0 and len(text.strip()) < _MIN_RESULT_TEXT_CHARS:
+        return None
+
+    # Prefer the document's own provenance over an ingestion-date fallback.
+    stamped = str(payload.get("modified_time") or "")[:10]
+    try:
+        modified = date.fromisoformat(stamped)
+    except ValueError:
+        return filed
+    if (filed - modified).days > _RESULT_BACKFILL_SLACK_DAYS:
+        return modified
+    return filed
+
+
 def latest_result_date(config: SyncConfig, key: str) -> Optional[date]:
     """Most recent ingested result date that satisfies checkup ``key``."""
     prefixes = _RESULT_FILE_PREFIXES.get(key)
@@ -404,10 +456,8 @@ def latest_result_date(config: SyncConfig, key: str) -> Optional[date]:
     best: Optional[date] = None
     for prefix in prefixes:
         for f in config.data_dir.glob(f"{prefix}*.json"):
-            raw = f.stem[len(prefix):]
-            try:
-                d = date.fromisoformat(raw)
-            except ValueError:
+            d = _result_date_if_real(f, prefix)
+            if d is None:
                 continue
             if best is None or d > best:
                 best = d
