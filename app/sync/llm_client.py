@@ -264,11 +264,10 @@ def _generate_codex(
         ]
         if image_path is not None:
             cmd.extend(["-i", str(image_path)])
-        cmd.append(prompt)
 
         try:
             proc = subprocess.run(
-                cmd, capture_output=True, text=True,
+                cmd, input=prompt, capture_output=True, text=True,
                 timeout=timeout_s, check=False,
                 env=_codex_exec_env(),  # node on PATH for the codex shebang
             )

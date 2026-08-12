@@ -207,6 +207,26 @@ REGISTRY: List[Biomarker] = [
         aliases=["prolactin", "prolactine", "prl"],
         short_label="PRL",
     ),
+    Biomarker(
+        id="dihydrotestosterone", name_en="Dihydrotestosterone", name_fr="Dihydrotestostérone",
+        unit="pg/mL", category="hormone", direction="mid_optimal",
+        ref_low=250.0, ref_high=990.0,
+        aliases=[
+            "dihydrotestosterone", "dihydrotestostérone", "dht",
+            "дигидротестостерон",
+        ],
+        short_label="DHT",
+    ),
+    Biomarker(
+        id="17oh_progesterone", name_en="17-OH progesterone",
+        name_fr="17-OH progestérone", unit="nmol/L", category="hormone",
+        direction="mid_optimal", ref_low=1.52, ref_high=6.36,
+        aliases=[
+            "17-oh progesterone", "17-hydroxyprogesterone",
+            "17-oh progestérone", "17-он-прогестерон",
+        ],
+        short_label="17-OHP",
+    ),
 
     # ── 🔥 Metabolic (ADA 2024 standards of care) ──
     Biomarker(

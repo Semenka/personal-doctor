@@ -151,6 +151,8 @@ _SANITY_CEILING: Dict[str, float] = {
     "fsh": 50.0,
     "estradiol": 200.0,
     "prolactin": 100.0,                   # >100 = clinical hyperprolactinemia
+    "dihydrotestosterone": 5000.0,
+    "17oh_progesterone": 100.0,
     "glucose_fasting": 500.0,
     "hba1c": 18.0,
     "ldl": 400.0,

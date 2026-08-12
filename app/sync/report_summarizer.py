@@ -67,6 +67,7 @@ def summarize_report_text(
 
     from .llm_client import generate as llm_generate
     from .llm_client import has_credentials
+    from .llm_client import provider_info
 
     if not has_credentials():
         logger.warning("LLM has no credentials; skipping summarization")
@@ -116,7 +117,9 @@ def summarize_report_text(
             return None
 
     parsed["generated_at"] = datetime.utcnow().isoformat() + "Z"
-    parsed["model"] = model
+    active_llm = provider_info()
+    parsed["model"] = active_llm.get("model")
+    parsed["provider"] = active_llm.get("provider")
 
     # Normalize severity to one of the 4 canonical strings
     sev = (parsed.get("severity") or "").upper().strip()

@@ -258,9 +258,10 @@ def main() -> int:
                 + (f" · ERR: {r.get('error') or r.get('skipped')}"
                    if r.get('error') or r.get('skipped') else "")
             )
-            processed_ids.add(f["id"])
-            grand_total += 1
-            grand_biomarkers += bm
+            if not r.get("error") and not r.get("skipped"):
+                processed_ids.add(f["id"])
+                grand_total += 1
+                grand_biomarkers += bm
 
     state["processed_ids"] = sorted(processed_ids)
     _save_state(config.data_dir, state)

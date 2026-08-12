@@ -44,8 +44,12 @@ def write_lab_document_json(
     payload: Dict[str, Any],
 ) -> Path:
     data_dir.mkdir(parents=True, exist_ok=True)
-    target = data_dir / f"{kind}_{date}.json"
-    target.write_text(json.dumps(payload, indent=2, sort_keys=True))
+    stored_payload = dict(payload)
+    stored_payload.setdefault("date", date)
+    drive_file_id = str(stored_payload.get("drive_file_id") or "").strip()
+    suffix = f"_{drive_file_id}" if drive_file_id else ""
+    target = data_dir / f"{kind}_{date}{suffix}.json"
+    target.write_text(json.dumps(stored_payload, indent=2, sort_keys=True))
     return target
 
 
