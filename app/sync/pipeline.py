@@ -281,6 +281,11 @@ def google_health_to_daily_payload(day: date, gh: Dict[str, Any]) -> Dict[str, A
         "floors": 0,
         "source": "fitbit",
         "via": "google_health",
+        # Which physical devices fed the merged Health Connect aggregates —
+        # the user wears a Fitbit Air daily and a Pebble 2 / Time 2 since
+        # 2026-08. Raw originDataSourceId strings, kept verbatim so a new
+        # device (or a new metric starting to cross the bridge) is visible.
+        "data_origins": list(gh.get("data_origins") or []),
         "activity_is_previous_day": False,
     }
 

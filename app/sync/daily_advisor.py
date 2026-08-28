@@ -207,11 +207,37 @@ def _last_measured(
     return None
 
 
+# Map raw Google Fit originDataSourceId strings to the physical device. The
+# user's wearable fleet: Fitbit Air (daily since 07-20), Pebble 2 / Time 2
+# (added 2026-08, syncs via Health Connect), plus phone sensors — the merged
+# aggregates hide which one contributed, so we surface it explicitly.
+_ORIGIN_DEVICE_PATTERNS = [
+    ("fitbit", "Fitbit Air"),
+    ("pebble", "Pebble 2 / Time 2"),
+    ("rebble", "Pebble 2 / Time 2"),
+    ("core devices", "Pebble 2 / Time 2"),
+    ("pixel", "Pixel phone sensors"),
+]
+
+
+def _device_sources(payload: Dict[str, Any]) -> str:
+    """Friendly device names behind today's merged Health Connect data."""
+    found: List[str] = []
+    for o in payload.get("data_origins") or []:
+        ol = str(o).lower()
+        for pat, name in _ORIGIN_DEVICE_PATTERNS:
+            if pat in ol and name not in found:
+                found.append(name)
+    return ", ".join(found)
+
+
 def _build_prompt(context: Dict[str, Any]) -> str:
     """Build the user prompt with today's data, trends, and action history."""
     oura = context.get("fitbit")
     labs = context.get("lab_reports", [])
     today = context["date"]
+    sources = _device_sources(oura or {})
+    sources_line = f"\nRecorded by: {sources}." if sources else ""
 
     # ── Oura section ──
     if oura and (oura.get("sleep_hours", 0) > 0 or oura.get("sleep_quality", 0) > 0):
@@ -219,7 +245,7 @@ def _build_prompt(context: Dict[str, Any]) -> str:
         if oura.get("activity_is_previous_day"):
             activity_note = " (previous day \u2014 today's not yet available)"
 
-        oura_section = f"""## Today's Fitbit Air data ({today})
+        oura_section = f"""## Today's wearable data ({today}) — merged via Health Connect{sources_line}
 **Sleep:**
 - Total sleep: {_measured(oura.get('sleep_hours'), ' hours')} (score {_measured(oura.get('sleep_quality'), '/100')})
 - Deep sleep: {_measured(oura.get('deep_sleep_min'), ' min')}
@@ -250,7 +276,7 @@ def _build_prompt(context: Dict[str, Any]) -> str:
         # printing "Sleep score: 0/100", which reads as a terrible night.
         history = context.get("fitbit_history") or []
         parts = [
-            "## Fitbit Air data",
+            "## Wearable data (via Health Connect)" + sources_line,
             f"Last night's sleep has NOT synced yet for {today} \u2014 the morning "
             "sync runs before the phone uploads. This is missing data, not a "
             "zero. Do not describe today's sleep, HRV or readiness as low.",
@@ -281,13 +307,15 @@ def _build_prompt(context: Dict[str, Any]) -> str:
             )
 
         parts.append(
-            "\nThis setup never reports HRV, resting HR or SpO2 \u2014 the Health "
-            "Connect bridge relays activity and sleep only. Do not ask the user "
-            "to check those, and do not infer recovery from their absence."
+            "\nHRV, resting HR and SpO2 have historically not crossed the "
+            "Health Connect bridge from these watches (the Pebble 2 / Time 2 "
+            "records HR and may start filling them). If they read 'not "
+            "measured', treat them as unknown \u2014 do not ask the user to check "
+            "them and do not infer recovery from their absence."
         )
         oura_section = "\n".join(parts)
     else:
-        oura_section = "## Fitbit Air data\nNo data available for today."
+        oura_section = "## Wearable data (via Health Connect)\nNo data available for today."
 
     # ── Lab reports section ──
     if labs:
@@ -654,8 +682,9 @@ Your patient is a man actively trying to conceive. Your primary goals are:
 1. **Maximize sperm motility** and overall sperm quality to increase chances of successful conception.
 2. **Maximize daily energy** so the patient feels sharp, productive, and physically ready.
 
-Every day you receive the patient's wearable data (Fitbit Air: sleep, heart rate, activity, \
-activity), any available medical reports (blood tests, sperm analysis, genetic tests, \
+Every day you receive the patient's wearable data — merged via Health Connect from his \
+watches (Fitbit Air, Pebble 2 / Time 2) and phone sensors, plus occasional Oura ring \
+nights — any available medical reports (blood tests, sperm analysis, genetic tests, \
 urine tests, doctor conclusions, prescriptions, complete health check-up reports), \
 and AI-assisted analyses of medical images (MRI, X-ray, CT scans) if any are on file.
 

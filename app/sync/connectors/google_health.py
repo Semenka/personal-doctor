@@ -96,8 +96,18 @@ def _day_window_ms(config: SyncConfig, day: date) -> tuple[int, int]:
     return int(start.timestamp() * 1000), int(end.timestamp() * 1000)
 
 
-def _aggregate(service, data_type: str, start_ms: int, end_ms: int) -> list:
-    """One daily-bucket aggregate request; returns the value dicts (or [])."""
+def _aggregate(
+    service, data_type: str, start_ms: int, end_ms: int, origins: set | None = None
+) -> list:
+    """One daily-bucket aggregate request; returns the value dicts (or []).
+
+    When ``origins`` is passed, each point's originDataSourceId is collected
+    into it. The user now wears more than one watch feeding Health Connect
+    (Fitbit Air daily, Pebble 2 / Time 2 added 2026-08), and the merged
+    aggregates hide which device contributed — provenance is the only way to
+    tell, and the only way to notice when a new device's stream (e.g. Pebble
+    heart rate) actually starts crossing the bridge.
+    """
     body = {
         "aggregateBy": [{"dataTypeName": data_type}],
         "bucketByTime": {"durationMillis": end_ms - start_ms},
@@ -113,6 +123,8 @@ def _aggregate(service, data_type: str, start_ms: int, end_ms: int) -> list:
     for bucket in resp.get("bucket", []) or []:
         for ds in bucket.get("dataset", []) or []:
             for pt in ds.get("point", []) or []:
+                if origins is not None and pt.get("originDataSourceId"):
+                    origins.add(pt["originDataSourceId"])
                 out.extend(pt.get("value", []) or [])
     return out
 
@@ -132,7 +144,9 @@ def _first_num(values: list, key: str = None) -> float:
     return 0
 
 
-def _sleep_stages(service, config: SyncConfig, day: date) -> Dict[str, float]:
+def _sleep_stages(
+    service, config: SyncConfig, day: date, origins: set | None = None
+) -> Dict[str, float]:
     """Sleep-stage minutes from the night ENDING on `day` (bedtime may be the
     prior evening, so the query window starts at noon the day before)."""
     tz = config.timezone
@@ -156,6 +170,8 @@ def _sleep_stages(service, config: SyncConfig, day: date) -> Dict[str, float]:
         return stages
 
     for pt in resp.get("point", []) or []:
+        if origins is not None and pt.get("originDataSourceId"):
+            origins.add(pt["originDataSourceId"])
         try:
             stage = pt["value"][0]["intVal"]
             dur_min = (int(pt["endTimeNanos"]) - int(pt["startTimeNanos"])) / 1e9 / 60
@@ -182,28 +198,33 @@ def fetch_daily_summary(config: SyncConfig, day: date) -> Dict[str, Any]:
     """
     service = _service(config)
     start_ms, end_ms = _day_window_ms(config, day)
+    origins: set = set()
 
-    steps = _first_num(_aggregate(service, "com.google.step_count.delta", start_ms, end_ms))
+    steps = _first_num(_aggregate(service, "com.google.step_count.delta", start_ms, end_ms, origins))
     # distance.delta requires the fitness.location.read scope, which this
     # token does not carry — the request 403s identically on every pull
     # (spamming 4 warning lines/day). Skip it; distance stays 0.
     distance_m = 0.0
-    calories = _first_num(_aggregate(service, "com.google.calories.expended", start_ms, end_ms))
-    active_min = _first_num(_aggregate(service, "com.google.active_minutes", start_ms, end_ms))
-    heart_points = _first_num(_aggregate(service, "com.google.heart_minutes", start_ms, end_ms))
-    spo2 = _first_num(_aggregate(service, "com.google.oxygen_saturation", start_ms, end_ms))
-    body_temp = _first_num(_aggregate(service, "com.google.body.temperature", start_ms, end_ms))
+    calories = _first_num(_aggregate(service, "com.google.calories.expended", start_ms, end_ms, origins))
+    active_min = _first_num(_aggregate(service, "com.google.active_minutes", start_ms, end_ms, origins))
+    heart_points = _first_num(_aggregate(service, "com.google.heart_minutes", start_ms, end_ms, origins))
+    spo2 = _first_num(_aggregate(service, "com.google.oxygen_saturation", start_ms, end_ms, origins))
+    body_temp = _first_num(_aggregate(service, "com.google.body.temperature", start_ms, end_ms, origins))
 
     # Heart rate aggregate returns average; min serves as a resting proxy.
-    hr_vals = _aggregate(service, "com.google.heart_rate.bpm", start_ms, end_ms)
+    # Historically empty via this bridge for the Fitbit Air; the Pebble 2 /
+    # Time 2 records continuous HR, so this is the stream where its arrival
+    # would first show (check data_origins to confirm which device sent it).
+    hr_vals = _aggregate(service, "com.google.heart_rate.bpm", start_ms, end_ms, origins)
     resting_hr = 0.0
     if hr_vals:
         mins = [v.get("fpVal", 0) for v in hr_vals if "fpVal" in v]
         resting_hr = min(mins) if mins else 0.0
 
-    sleep = _sleep_stages(service, config, day)
+    sleep = _sleep_stages(service, config, day, origins)
 
     return {
+        "data_origins": sorted(origins),
         "steps": int(steps),
         "distance_km": round(distance_m / 1000, 2),
         "calories": int(calories),

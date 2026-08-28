@@ -271,7 +271,7 @@ def render_compare_advisor_block(config: SyncConfig, day: str) -> str:
         # absent metrics matters — otherwise the model can read "no HRV line"
         # as "HRV was fine" and give recovery advice with no recovery data.
         lines = [
-            "## ⌚ Today's wearable (Fitbit Air — the user's only device)",
+            "## ⌚ Today's wearable data (Health Connect — Fitbit Air / Pebble 2 / phone)",
             "These are the only wearable readings available today. Do not infer "
             "recovery status from their absence: any metric not listed below "
             "was NOT measured. If you need sleep, HRV, resting HR or body "
