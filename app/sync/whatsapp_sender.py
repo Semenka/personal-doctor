@@ -44,7 +44,16 @@ _GATEWAY_HEAL_SIGNATURES = (
     "gatewaytransporterror",
 )
 
-_gateway_healed_this_process = False
+# The gateway self-heal used to be a once-per-process boolean latch. The
+# service process lives for weeks, so the first heal consumed it forever:
+# on 2026-08-21 21:00 a kickstart fired (and that night didn't help), after
+# which the gateway failures of 08-22, 08-26 and 08-27 — 9 failed sends, two
+# lost morning digests — never triggered another attempt, even though
+# kickstart has a proven record against the 1006 transport error (06-08,
+# 06-15). A time throttle keeps the original intent (no kickstart loops
+# within one burst of sends) while allowing recovery across days.
+_GATEWAY_HEAL_MIN_INTERVAL_S = 30 * 60
+_gateway_last_heal_ts: float = 0.0
 
 _OPENCLAW_PATH_CACHE: Optional[str] = None
 
@@ -164,7 +173,7 @@ def _run_openclaw_send(message: str, target: str = DEFAULT_TARGET) -> bool:
 
     Returns True if any channel accepted the message. Best-effort: never raises.
     """
-    global _gateway_healed_this_process
+    global _gateway_last_heal_ts
 
     if not message.strip():
         return False
@@ -176,11 +185,13 @@ def _run_openclaw_send(message: str, target: str = DEFAULT_TARGET) -> bool:
         return True
     logger.warning(f"WhatsApp send failed: {err}")
 
-    # Self-heal: if the gateway lost its outbound handler, kickstart + retry once.
-    if (not _gateway_healed_this_process
+    # Self-heal: if the gateway lost its outbound handler, kickstart + retry —
+    # at most once per _GATEWAY_HEAL_MIN_INTERVAL_S across the process.
+    heal_due = (time.time() - _gateway_last_heal_ts) >= _GATEWAY_HEAL_MIN_INTERVAL_S
+    if (heal_due
             and any(sig in err.lower() for sig in _GATEWAY_HEAL_SIGNATURES)):
         logger.warning("Gateway handler error — kickstarting OpenClaw gateway and retrying.")
-        _gateway_healed_this_process = True
+        _gateway_last_heal_ts = time.time()
         _kickstart_gateway()
         ok, err = _openclaw_send_once(message, target)
         if ok:
