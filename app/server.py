@@ -242,6 +242,7 @@ def start_server():
         run_health_os_brief_job,
         run_journal_watch_job,
         run_overdue_checkup_alert,
+        run_oura_weekly_sweep,
         run_research_sync,
         run_supplement_check_job,
         run_weekly_retro_job,
@@ -270,6 +271,10 @@ def start_server():
                       id="supplement_daily", misfire_grace_time=3600)
     scheduler.add_job(run_whatsapp_evening_nudge, "cron", hour=21, minute=0,
                       id="evening_nudge", misfire_grace_time=3600)
+    # Sun 17:50 — capture sporadic Oura data (ring no longer daily-worn)
+    # before the retro/brief read the week's files.
+    scheduler.add_job(run_oura_weekly_sweep, "cron", day_of_week="sun", hour=17, minute=50,
+                      id="oura_weekly_sweep", misfire_grace_time=7200)
     scheduler.add_job(run_weekly_retro_job, "cron", day_of_week="sun", hour=18, minute=0,
                       id="weekly_retro", misfire_grace_time=7200)
     # Sun 18:15 journal review, then 18:30 the Health OS brief that reads it.

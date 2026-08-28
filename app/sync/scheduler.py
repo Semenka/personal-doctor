@@ -153,6 +153,46 @@ if __name__ == "__main__":
     start_scheduler()
 
 
+def run_oura_weekly_sweep() -> None:
+    """Sun 17:50 — capture SPORADIC Oura data (ring is no longer daily-worn).
+
+    The user moved to Fitbit Air as the daily device (2026-08); the ring is
+    only worn occasionally, so the daily Oura cron was removed. Without any
+    ingestion path those occasional nights would be lost. This sweep pulls
+    the last 7 days once a week and stores any day that has real data and
+    isn't already stored fresh — silent when the ring wasn't worn at all.
+    Runs before the Sunday retro/brief (18:00/18:30) so they see the data.
+    """
+    from datetime import datetime, timedelta
+
+    config = load_config()
+    if not config.oura_access_token:
+        return
+    from .pipeline import oura_data_is_fresh
+
+    day = datetime.now(tz=config.timezone).date()
+    captured = 0
+    for back in range(0, 7):
+        bday = day - timedelta(days=back)
+        try:
+            existing = _load_stored_daily(config, bday.isoformat())
+            if existing and oura_data_is_fresh(existing):
+                continue
+            payload = load_oura_daily(config, bday)
+            if not oura_data_is_fresh(payload):
+                continue
+            if config.database_url:
+                save_daily_payload_db(config, payload)
+            else:
+                write_daily_json(config.data_dir, bday.isoformat(), payload)
+            captured += 1
+            print(f"Oura weekly sweep: captured sporadic ring data for {bday}.")
+        except Exception as exc:
+            print(f"Oura weekly sweep {bday} skipped: {exc}")
+    if not captured:
+        print("Oura weekly sweep: no new ring data this week (expected — ring is sporadic).")
+
+
 def run_oura_sync() -> None:
     from datetime import datetime, timedelta
 

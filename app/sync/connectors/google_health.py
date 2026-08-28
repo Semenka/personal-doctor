@@ -184,7 +184,10 @@ def fetch_daily_summary(config: SyncConfig, day: date) -> Dict[str, Any]:
     start_ms, end_ms = _day_window_ms(config, day)
 
     steps = _first_num(_aggregate(service, "com.google.step_count.delta", start_ms, end_ms))
-    distance_m = _first_num(_aggregate(service, "com.google.distance.delta", start_ms, end_ms))
+    # distance.delta requires the fitness.location.read scope, which this
+    # token does not carry — the request 403s identically on every pull
+    # (spamming 4 warning lines/day). Skip it; distance stays 0.
+    distance_m = 0.0
     calories = _first_num(_aggregate(service, "com.google.calories.expended", start_ms, end_ms))
     active_min = _first_num(_aggregate(service, "com.google.active_minutes", start_ms, end_ms))
     heart_points = _first_num(_aggregate(service, "com.google.heart_minutes", start_ms, end_ms))
