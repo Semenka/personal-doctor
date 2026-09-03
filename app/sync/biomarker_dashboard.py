@@ -353,7 +353,12 @@ def render_whatsapp_summary(
                 buckets[label].append((rank, m, t))
                 break
 
-    out_lines = [f"📊 Biomarker dashboard — {sum(len(v) for v in buckets.values())} tracked"]
+    out_lines = [
+        f"📊 Biomarker dashboard — {sum(len(v) for v in buckets.values())} tracked",
+        # Arrows mean health direction, not numeric direction — without this
+        # legend "⬆ SHBG 36→25 (-31%)" reads as a contradiction.
+        "(⬆ improving · ⬇ worsening · 🟢 in range · 🔴 out of range)",
+    ]
     # Lazy import — avoid a hard dep cycle if interventions module is missing.
     try:
         from .biomarker_interventions import get_interventions

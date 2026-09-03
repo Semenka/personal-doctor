@@ -300,15 +300,105 @@ def _extract_priority_and_backup(advice_text: str) -> Dict[str, Any]:
     return result
 
 
+def _action_when_and_step(advice_text: str, number: int) -> Dict[str, str]:
+    """Pull the **When:** time and step a) for numbered action ``number``.
+
+    The phone digest used to show titles only ("Lunch Antioxidant Motility
+    Stack"), which forced a trip to the email to learn WHAT to take and WHEN.
+    The advisor's enforced structure carries both, so surface them inline.
+    """
+    out = {"when": "", "step": ""}
+    block = re.search(
+        rf"^\s*{number}\.\s+\*\*.+?(?=^\s*\d+\.\s+\*\*|^###|\Z)",
+        advice_text or "",
+        re.MULTILINE | re.DOTALL,
+    )
+    if not block:
+        return out
+    text = block.group(0)
+    when = re.search(r"\*\*When:\*\*\s*(.+)", text)
+    if when:
+        out["when"] = when.group(1).strip().rstrip(" \\")
+    step = re.search(r"^\s*a\)\s*(.+)", text, re.MULTILINE)
+    if step:
+        out["step"] = step.group(1).strip().rstrip(" \\")[:140]
+    return out
+
+
+def _yesterday_activity_line(config: SyncConfig, day: str) -> str:
+    """One truthful wearable line for the morning digest.
+
+    At 08:00 today's file is an upload-lag stub ("Steps: 12"), which is
+    noise. Yesterday's file is finalized by the 07:40 backfill, so that is the
+    number that actually informs the morning. Includes sleep only when a
+    device measured it (sporadic ring or bridge sleep) — zeros mean absent.
+    """
+    import json
+    from datetime import date, timedelta
+
+    try:
+        yday = (date.fromisoformat(day) - timedelta(days=1)).isoformat()
+    except ValueError:
+        return ""
+    fb: Dict[str, Any] = {}
+    oura: Dict[str, Any] = {}
+    for name, target in ((f"fitbit_{yday}.json", "fb"), (f"daily_{yday}.json", "oura")):
+        path = config.data_dir / name
+        if path.exists():
+            try:
+                loaded = json.loads(path.read_text())
+                if target == "fb":
+                    fb = loaded
+                else:
+                    oura = loaded
+            except Exception:
+                pass
+    steps = fb.get("steps") or 0
+    if steps < 500 and not (oura.get("sleep_hours") or 0):
+        return ""
+    parts = []
+    if steps >= 500:
+        parts.append(f"{steps:,} steps")
+        if fb.get("active_minutes"):
+            parts.append(f"{fb['active_minutes']} active min")
+        if fb.get("active_zone_minutes"):
+            parts.append(f"AZM {fb['active_zone_minutes']}")
+    sleep = fb.get("sleep_hours") or oura.get("sleep_hours") or 0
+    if sleep:
+        src = "ring" if not fb.get("sleep_hours") and oura.get("sleep_hours") else "watch"
+        parts.append(f"sleep {sleep:.1f}h ({src})")
+    if oura.get("hrv"):
+        parts.append(f"HRV {oura['hrv']:.0f}")
+    return "⌚ Yesterday: " + " · ".join(parts) if parts else ""
+
+
+def _completion_footer(config: SyncConfig) -> str:
+    """Truthful 'how to mark done' line: the tracker Sheet (one tap on the
+    phone), with the reply flow mentioned only if it is actually bound."""
+    try:
+        from .sheets_tracker import get_tracker_sheet_url_cached
+
+        url = get_tracker_sheet_url_cached(config)
+    except Exception:
+        url = None
+    if url:
+        return f"✅ Tick actions done (1 tap): {url}"
+    return "✅ Mark actions done via the buttons in today's email."
+
+
 def send_whatsapp_advice(config: SyncConfig, advice: Dict[str, Any]) -> bool:
     """Send the morning 8 AM digest to WhatsApp.
 
     Message shape:
         🩺 Daily Plan — YYYY-MM-DD
-        🎯 Priority: <title>
-        🔁 Backup: <title>
-        Quick wins: <mw1> · <mw2> · <mw3>
-        Reply "1" to mark priority done, "2" for backup, "done" for both.
+        🎯 Priority: <title> — <when>
+           ↳ <step a>
+        🔁 Backup: <title> — <when>
+           ↳ <step a>
+        ⚡ Quick wins: <mw1> · <mw2> · <mw3>
+        📊 biomarkers · 📋 protocol · 📚 papers
+        ⌚ Yesterday: <finalized steps / active min / sleep if measured>
+        ✅ Tick actions done (1 tap): <tracker Sheet URL>
 
     If the advice is a stale-wearable short-circuit, send a different short message.
     """
@@ -329,7 +419,19 @@ def send_whatsapp_advice(config: SyncConfig, advice: Dict[str, Any]) -> bool:
     backup = parsed.get("backup")
     micro_wins = parsed.get("micro_wins", [])
 
-    lines = [f"🩺 Daily Plan — {day}", f"🎯 Priority: {priority}"]
+    # Priority/backup carry their time + first concrete step so the phone
+    # digest is actionable on its own (titles alone forced a trip to email).
+    def _action_lines(icon: str, label: str, title: str, number: int) -> List[str]:
+        d = _action_when_and_step(advice_text, number)
+        head = f"{icon} {label}: {title}"
+        if d["when"]:
+            head += f" — {d['when']}"
+        out = [head]
+        if d["step"]:
+            out.append(f"   ↳ {d['step']}")
+        return out
+
+    lines = [f"🩺 Daily Plan — {day}"] + _action_lines("🎯", "Priority", priority, 1)
 
     # If Fitbit Air hadn't synced by 8 AM, surface a one-line nudge on the phone channel
     # too (the full plan below still ships from labs + protocol). Drives the user
@@ -338,7 +440,7 @@ def send_whatsapp_advice(config: SyncConfig, advice: Dict[str, Any]) -> bool:
     if stale_days:
         lines.insert(1, f"⚠️ Fitbit Air not synced ({stale_days}d) — check Fitbit + Health Connect")
     if backup:
-        lines.append(f"🔁 Backup: {backup}")
+        lines += _action_lines("🔁", "Backup", backup, 2)
     if micro_wins:
         # Strip trailing dash/em-dash descriptions for the WhatsApp short form
         trimmed = [w.split("—")[0].strip() for w in micro_wins]
@@ -381,19 +483,30 @@ def send_whatsapp_advice(config: SyncConfig, advice: Dict[str, Any]) -> bool:
     except Exception as exc:
         logger.warning(f"papers WhatsApp block failed: {exc}")
 
-    # Device comparison (Oura vs Fitbit) — only when both wearables synced.
+    # Wearable line: yesterday's FINALIZED day, not today's 08:00 stub
+    # ("Steps: 12"). Falls back to the two-device comparison only when both
+    # wearables genuinely reported today.
     try:
-        from .device_compare import render_compare_whatsapp
+        from .device_compare import _has_oura, compare_metrics, render_compare_whatsapp
 
-        cmp_block = render_compare_whatsapp(config, day)
-        if cmp_block:
+        rows = compare_metrics(config, day)
+        if rows and _has_oura(rows):
             lines.append("")
-            lines.append(cmp_block)
+            lines.append(render_compare_whatsapp(config, day))
+        else:
+            yline = _yesterday_activity_line(config, day)
+            if yline:
+                lines.append("")
+                lines.append(yline)
     except Exception as exc:
-        logger.warning(f"device-compare WhatsApp block failed: {exc}")
+        logger.warning(f"wearable WhatsApp line failed: {exc}")
 
+    # Completion footer — must be TRUTHFUL. WhatsApp inbound is bound to the
+    # general OpenClaw agent, so "reply 1/2/done" never reached this app (the
+    # only /whatsapp/inbound hits ever were a local test on 2026-04-18). Point
+    # at the tracker Sheet, which works from the phone with one tap.
     lines.append("")
-    lines.append('Reply "1" for priority done, "2" for backup, "done" for both.')
+    lines.append(_completion_footer(config))
 
     message = "\n".join(lines)
     ok = _run_openclaw_send(message)
@@ -427,7 +540,7 @@ def send_whatsapp_evening_nudge(
         lines.append(f"{i}. {a.get('title', '?')}")
     lines.append("")
     lines.append(
-        'Want to knock one out tonight? Reply "1", "2", or "done".'
+        "Want to knock one out tonight? " + _completion_footer(config)
     )
 
     message = "\n".join(lines)
