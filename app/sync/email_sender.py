@@ -448,9 +448,20 @@ def send_advice_email(config: SyncConfig, advice: Dict[str, Any]) -> None:
     # Device comparison (Oura vs Fitbit) — only renders when Fitbit synced
     device_compare_html = ""
     try:
-        from .device_compare import render_compare_email_html
+        from datetime import date as _date, timedelta as _td
 
-        device_compare_html = render_compare_email_html(config, day)
+        from .device_compare import _has_oura, compare_metrics, render_compare_email_html
+
+        rows = compare_metrics(config, day)
+        steps_today = next((r["fitbit"] or 0 for r in rows if r["metric"] == "steps"), 0)
+        if rows and not _has_oura(rows) and steps_today < 500:
+            # 08:00 same-day file is an upload-lag stub ("Steps 12"); show
+            # yesterday's finalized day instead — the number that informs
+            # this morning. Two-device days keep the live comparison.
+            yday = (_date.fromisoformat(day) - _td(days=1)).isoformat()
+            device_compare_html = render_compare_email_html(config, yday, label="Yesterday")
+        else:
+            device_compare_html = render_compare_email_html(config, day)
     except Exception:
         device_compare_html = ""
 

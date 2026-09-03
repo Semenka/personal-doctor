@@ -161,8 +161,13 @@ def _fmt(v: Any, unit: str) -> str:
     return f"{v}{unit}"
 
 
-def render_compare_email_html(config: SyncConfig, day: str) -> str:
-    """A '⌚ Device comparison' card: metric | Oura | Fitbit."""
+def render_compare_email_html(config: SyncConfig, day: str, label: str = "Today") -> str:
+    """A '⌚ Device comparison' card: metric | Oura | Fitbit.
+
+    ``label`` names the single-device column/header ("Today" or "Yesterday")
+    so the email can show yesterday's FINALIZED day instead of the 08:00
+    upload-lag stub ("Steps 12").
+    """
     rows = compare_metrics(config, day)
     if not rows:
         return ""
@@ -185,10 +190,10 @@ def render_compare_email_html(config: SyncConfig, day: str) -> str:
             '<h3 style="color:#1e40af;margin:0 0 4px 0;font-size:16px;">'
             '&#x231A; Fitbit Air</h3>'
             '<div style="font-size:12px;color:#6b7280;margin-bottom:8px;">'
-            'Today&rsquo;s wearable readings. Metrics not listed were not measured.</div>'
+            f'{escape(label)}&rsquo;s wearable readings. Metrics not listed were not measured.</div>'
             '<table cellspacing="0" cellpadding="0" border="0" style="width:100%;">'
             '<tr><th style="text-align:left;font-size:12px;color:#64748b;padding:4px 10px;">Metric</th>'
-            '<th style="text-align:right;font-size:12px;color:#64748b;padding:4px 10px;">Today</th></tr>'
+            f'<th style="text-align:right;font-size:12px;color:#64748b;padding:4px 10px;">{escape(label)}</th></tr>'
             f'{body}</table></div>'
         )
 
