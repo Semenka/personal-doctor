@@ -336,6 +336,22 @@ def start_server():
                     f"Self-check: Fitbit Air payload OK — steps={p.get('steps')}, "
                     f"sleep={p.get('sleep_hours')}h."
                 )
+            # 2b. Is the WATCH reporting, or only the phone's step counter?
+            # (Phone steps keep the check above green — 2026-08-04 → 09-05.)
+            from datetime import date as _date
+            from app.sync.pipeline import watch_silence
+
+            silence = watch_silence(config, _date.fromisoformat(today_iso))
+            silent = int(silence.get("silent_days") or 0)
+            if silent >= 3:
+                logger.warning(
+                    f"⚠️ Self-check: watch silent {silent} days (last watch data: "
+                    f"{silence.get('last_watch_date') or 'never'}) — steps are "
+                    "phone-sensor only; run scripts.fitbit_auth or fix Fitbit → "
+                    "Health Connect on the phone."
+                )
+            else:
+                logger.info("Self-check: watch data reporting.")
         except Exception as exc:
             logger.warning(f"Self-check: Fitbit Air probe errored: {exc}")
 
@@ -368,6 +384,7 @@ def start_server():
     logger.info("  Schedule:")
     logger.info("    07:20  Research sync (PubMed + OpenAlex)")
     logger.info("    07:30  Google Drive health folder scan")
+    logger.info("    07:38  Oura ring sweep (sporadic nights, last 7 days)")
     logger.info("    07:40  Fitbit Air data sync")
     logger.info("    07:41  Anomaly detector")
     logger.info("    07:45  Supplement inventory check")
