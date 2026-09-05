@@ -69,11 +69,67 @@ def load_primary_wearable_history(
             payload = json.loads(path.read_text())
             payload["_date"] = d.isoformat()
             payload.setdefault("source", "fitbit" if path == fitbit_path else "oura")
+            if path == fitbit_path and oura_path.exists():
+                try:
+                    payload = overlay_ring_recovery(
+                        payload, json.loads(oura_path.read_text())
+                    )
+                except (json.JSONDecodeError, OSError):
+                    pass
             history.append(payload)
         except (json.JSONDecodeError, OSError):
             continue
     history.reverse()
     return history
+
+
+# Recovery metrics the Oura ring measures and the phone relay never delivers.
+_RING_RECOVERY_KEYS = (
+    "sleep_hours", "sleep_quality", "deep_sleep_min", "rem_sleep_min",
+    "light_sleep_min", "efficiency", "hrv", "resting_hr", "avg_hr",
+    "avg_breath", "readiness_score", "temp_deviation", "spo2",
+)
+
+
+def _ring_reported(oura: Dict[str, Any]) -> bool:
+    """Same rule as pipeline.oura_data_is_fresh, kept local to avoid a cycle."""
+    signals = 0
+    for key in ("sleep_hours", "hrv", "readiness_score", "resting_hr", "sleep_quality"):
+        try:
+            if float(oura.get(key) or 0) > 0:
+                signals += 1
+        except (TypeError, ValueError):
+            continue
+    return signals >= 2
+
+
+def overlay_ring_recovery(
+    fitbit: Dict[str, Any], oura: Optional[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Fill a Fitbit-file day's missing recovery metrics from a real ring night.
+
+    The Fitbit file wins whenever it exists, so the sporadic Oura nights the
+    Sunday sweep captures (real sleep, HRV, RHR) never reached the advisor,
+    anomaly detector, retro or brief — the 2026-08-30 brief said "No recovery
+    data" while holding five ring nights. Only fills keys the Fitbit payload
+    left at 0/None, only from a night that actually passed the ring's
+    freshness rule, and stamps ``recovery_source="oura"`` so renderers can
+    say where the sleep came from. Activity stays the watch/phone's.
+    """
+    if not oura or not _ring_reported(oura):
+        return fitbit
+    merged = dict(fitbit)
+    filled = False
+    for key in _RING_RECOVERY_KEYS:
+        value = oura.get(key)
+        if value in (None, 0, 0.0):
+            continue
+        if merged.get(key) in (None, 0, 0.0):
+            merged[key] = value
+            filled = True
+    if filled:
+        merged["recovery_source"] = "oura"
+    return merged
 
 
 _METRIC_KEYS = [

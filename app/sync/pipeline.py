@@ -349,6 +349,79 @@ def check_fitbit_freshness(
     }
 
 
+# Origin substrings that prove a physical watch contributed to a payload.
+# (Mirrors daily_advisor._ORIGIN_DEVICE_PATTERNS minus the phone entry.)
+_WATCH_ORIGIN_MARKERS = ("fitbit", "pebble", "rebble", "core devices")
+
+
+def payload_has_watch_data(payload: Dict[str, Any]) -> bool:
+    """True when a wearable — not just the phone — contributed to this day.
+
+    Steps alone prove nothing: since 2026-08-04 every relay payload has been
+    the Pixel's own step counter, which kept ``fitbit_data_is_fresh`` happy
+    while the Fitbit Air itself was silent for a month. A watch day is one
+    that (a) came from Fitbit's cloud, (b) carries a watch-named
+    ``data_origins`` entry, or (c) holds a recovery metric (sleep, HRV,
+    resting HR, SpO2) — the phone never produces those.
+    """
+    if not payload:
+        return False
+    if "fitbit_web_api" in str(payload.get("via") or ""):
+        return True
+    for origin in payload.get("data_origins") or []:
+        ol = str(origin).lower()
+        if any(marker in ol for marker in _WATCH_ORIGIN_MARKERS):
+            return True
+    for key in ("sleep_hours", "hrv", "resting_hr", "spo2"):
+        try:
+            if float(payload.get(key) or 0) > 0:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
+def watch_silence(
+    config: SyncConfig, day: date, lookback_days: int = 60
+) -> Dict[str, Any]:
+    """How long the watches have been silent, judged by origin — not by steps.
+
+    Returns ``silent_days`` (consecutive days ending today without watch
+    data; today's still-accumulating file counts only if it already has
+    watch data), ``last_watch_date`` (most recent watch day within the
+    lookback, or None) and ``phone_only`` (True when the relay is delivering
+    phone-sensor steps while the watch is silent — the failure mode where
+    everything *looks* healthy).
+    """
+    from datetime import timedelta
+    from .storage import load_wearable_payload_file
+
+    silent_days = 0
+    last_watch = None
+    phone_steps_seen = False
+    counting = True
+    for i in range(lookback_days + 1):
+        d = (day - timedelta(days=i)).isoformat()
+        try:
+            payload = load_wearable_payload_file(config.data_dir, d, source="fitbit")
+        except FileNotFoundError:
+            payload = None
+        except Exception:
+            payload = None
+        if payload_has_watch_data(payload):
+            last_watch = d
+            break
+        if counting:
+            silent_days += 1
+            if payload and (payload.get("steps") or 0) >= 500:
+                phone_steps_seen = True
+    return {
+        "silent_days": silent_days,
+        "last_watch_date": last_watch,
+        "phone_only": silent_days > 0 and phone_steps_seen,
+    }
+
+
 def oura_data_is_fresh(payload: Dict[str, Any]) -> bool:
     """Return True if the Oura payload contains real (non-zero) sleep/recovery data.
 

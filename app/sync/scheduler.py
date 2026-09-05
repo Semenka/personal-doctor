@@ -37,6 +37,11 @@ def start_scheduler() -> None:
     scheduler.add_job(run_gdrive_sync, "cron", hour=7, minute=30,
                       id="gdrive_daily", misfire_grace_time=3600)
     # 07:40 — Fitbit Air data sync (sole wearable source)
+    # Ring sweep daily too (was Sunday-only): a sporadic ring night now reaches
+    # the same morning's advisor instead of waiting up to six days. Cheap —
+    # seven Oura reads, skips days already stored fresh, silent when unworn.
+    scheduler.add_job(run_oura_weekly_sweep, "cron", hour=7, minute=38,
+                      id="oura_daily_sweep", misfire_grace_time=600)
     scheduler.add_job(run_fitbit_sync, "cron", hour=7, minute=40,
                       id="fitbit_daily", misfire_grace_time=3600)
     # 08:00 — AI daily advisor (Gemini 3.1 Flash Lite): analyse Oura + reports → email
@@ -571,6 +576,30 @@ def run_daily_advisor() -> None:
             "Open Fitbit and Health Connect on the phone, then confirm data sharing is active."
         )
 
+    # Origin-based check: phone-sensor steps kept `check_fitbit_freshness`
+    # green for a month (2026-08-04 → 09-05) while the watch itself sent
+    # nothing. Judge the watch by watch evidence and say so in every channel.
+    silence = {}
+    try:
+        from .pipeline import watch_silence
+
+        silence = watch_silence(config, day)
+    except Exception as exc:
+        print(f"  watch-silence check skipped: {exc}")
+    silent_days = int(silence.get("silent_days") or 0)
+    if silent_days >= 3 and not stale_banner:
+        last = silence.get("last_watch_date")
+        last_txt = f"last watch data {last}" if last else "no watch data on record"
+        stale_banner = (
+            f"### ⚠️ Watch not syncing — {silent_days} days without Fitbit Air / "
+            f"Pebble data ({last_txt})\n\n"
+            "Steps below are the phone's own sensor; sleep, HRV, resting HR and "
+            "SpO2 are missing, not low. Fix on the phone: Fitbit app → Settings → "
+            "Health Connect → allow *write* for sleep/heart/SpO2, then Google Fit → "
+            "Health Connect → allow *read*. Or link the Fitbit cloud once "
+            "(`.venv/bin/python -m scripts.fitbit_auth`) to bypass the phone."
+        )
+
     try:
         advice = generate_daily_advice(config, day)
     except Exception as exc:
@@ -611,7 +640,12 @@ def run_daily_advisor() -> None:
 
     if stale_banner:
         advice["advice"] = stale_banner + "\n\n" + advice.get("advice", "")
-        advice.setdefault("context_summary", {})["fitbit_stale_days"] = freshness["stale_days"]
+        summary = advice.setdefault("context_summary", {})
+        if not freshness["fresh"] and freshness["stale_days"] >= 3:
+            summary["fitbit_stale_days"] = freshness["stale_days"]
+        if silent_days >= 3:
+            summary["watch_silent_days"] = silent_days
+            summary["watch_last_date"] = silence.get("last_watch_date")
 
     print_advice(advice)
     local_path = save_advice_local(config, advice)

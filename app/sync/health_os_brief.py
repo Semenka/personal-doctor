@@ -105,6 +105,20 @@ def _system_health(config: SyncConfig, today: date) -> str:
         lines.append(f"- Wearable sync: {fresh_days}/7 days with activity data")
         if fresh_days < 5:
             issues.append("wearable sync degraded")
+        # Activity can be phone-sensor only; report the watch separately.
+        from .pipeline import watch_silence
+
+        silence = watch_silence(config, today)
+        silent = int(silence.get("silent_days") or 0)
+        if silent >= 3:
+            last = silence.get("last_watch_date") or "never"
+            lines.append(
+                f"- ⚠️ Watch data (Fitbit Air / Pebble): silent {silent} days "
+                f"(last {last}) — steps are phone-sensor; sleep/HRV absent"
+            )
+            issues.append("watch not syncing")
+        else:
+            lines.append("- Watch data: reporting")
     except Exception:
         lines.append("- Wearable sync: unknown")
 

@@ -436,9 +436,19 @@ def send_whatsapp_advice(config: SyncConfig, advice: Dict[str, Any]) -> bool:
     # If Fitbit Air hadn't synced by 8 AM, surface a one-line nudge on the phone channel
     # too (the full plan below still ships from labs + protocol). Drives the user
     # to restore the phone-side bridge the same day.
-    stale_days = (advice.get("context_summary") or {}).get("fitbit_stale_days") or 0
+    summary = advice.get("context_summary") or {}
+    stale_days = summary.get("fitbit_stale_days") or 0
+    silent_days = summary.get("watch_silent_days") or 0
     if stale_days:
         lines.insert(1, f"⚠️ Fitbit Air not synced ({stale_days}d) — check Fitbit + Health Connect")
+    elif silent_days:
+        # Phone steps still arrive, so the old check stays green; the watch
+        # itself is silent. Name it and give the one-line fix.
+        lines.insert(
+            1,
+            f"⚠️ Watch silent {silent_days}d (phone steps only, no sleep/HRV) — "
+            "Fitbit app → Health Connect → allow sleep+heart, or run fitbit_auth",
+        )
     if backup:
         lines += _action_lines("🔁", "Backup", backup, 2)
     if micro_wins:

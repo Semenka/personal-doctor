@@ -57,6 +57,26 @@ def _gather_context(
     except FileNotFoundError:
         context["fitbit"] = None
 
+    # A sporadic ring night (captured by the Oura sweep) fills the recovery
+    # metrics the phone relay never delivers — same overlay the history uses.
+    if context["fitbit"] is not None:
+        try:
+            from .storage import load_wearable_payload_file as _load_ring
+            from .trend_analyzer import overlay_ring_recovery
+
+            ring = _load_ring(config.data_dir, day.isoformat(), source="oura")
+            context["fitbit"] = overlay_ring_recovery(context["fitbit"], ring)
+        except Exception:
+            pass
+
+    # Are the watches actually reporting, or is the relay serving phone steps?
+    try:
+        from .pipeline import watch_silence
+
+        context["watch_silence"] = watch_silence(config, day)
+    except Exception:
+        context["watch_silence"] = {}
+
     # Lab documents (most recent of each kind)
     try:
         labs = load_lab_documents(config)
@@ -231,13 +251,34 @@ def _device_sources(payload: Dict[str, Any]) -> str:
     return ", ".join(found)
 
 
+def _watch_silence_note(silence: Dict[str, Any]) -> str:
+    """Tell the model when the watch itself is silent so absent sleep/HRV is
+    read as a broken relay, not a bad night — and so the plan can say so."""
+    days = int(silence.get("silent_days") or 0)
+    if days < 3:
+        return ""
+    last = silence.get("last_watch_date")
+    since = f" (last watch data: {last})" if last else " (no watch data on record)"
+    return (
+        f"\nWATCH STATUS: no data from the Fitbit Air or Pebble has reached this "
+        f"pipeline for {days} days{since}. Steps above come from the phone's own "
+        "sensor. Sleep, HRV, resting HR and SpO2 are absent for that reason — "
+        "never as a reading. Do not assess recovery from them; if you mention "
+        "the wearable, say it is not syncing and that fixing the Fitbit app -> "
+        "Health Connect link (or the Fitbit cloud login) restores it."
+    )
+
+
 def _build_prompt(context: Dict[str, Any]) -> str:
     """Build the user prompt with today's data, trends, and action history."""
     oura = context.get("fitbit")
     labs = context.get("lab_reports", [])
     today = context["date"]
     sources = _device_sources(oura or {})
+    if oura and oura.get("recovery_source") == "oura":
+        sources = (sources + ", " if sources else "") + "Oura ring (sleep/recovery)"
     sources_line = f"\nRecorded by: {sources}." if sources else ""
+    sources_line += _watch_silence_note(context.get("watch_silence") or {})
 
     # ── Oura section ──
     if oura and (oura.get("sleep_hours", 0) > 0 or oura.get("sleep_quality", 0) > 0):
