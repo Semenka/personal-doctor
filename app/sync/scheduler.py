@@ -587,12 +587,15 @@ def run_daily_advisor() -> None:
     except Exception as exc:
         print(f"  watch-silence check skipped: {exc}")
     silent_days = int(silence.get("silent_days") or 0)
-    if silent_days >= 3 and not stale_banner:
+    from .pipeline import describe_device_silence
+
+    device_txt = describe_device_silence(silence)
+    if (silent_days >= 3 or device_txt) and not stale_banner:
         last = silence.get("last_watch_date")
         last_txt = f"last watch data {last}" if last else "no watch data on record"
+        headline = device_txt or f"{silent_days} days without watch data"
         stale_banner = (
-            f"### ⚠️ Watch not syncing — {silent_days} days without Fitbit Air / "
-            f"Pebble data ({last_txt})\n\n"
+            f"### ⚠️ Watch not syncing — {headline} ({last_txt})\n\n"
             "Steps below are the phone's own sensor; sleep, HRV, resting HR and "
             "SpO2 are missing, not low. Google Fit's streams show the Health "
             "Connect relay died for *both* the Fitbit and Oura apps (heart rate "
@@ -600,7 +603,8 @@ def run_daily_advisor() -> None:
             "Fit ↔ Health Connect link: Google Fit → Profile → Settings → Health "
             "Connect → re-enable sync and *read* for sleep/heart/SpO2; then Fitbit "
             "app → Health Connect → *write* on. Or link the Fitbit cloud once "
-            "(`.venv/bin/python -m scripts.fitbit_auth`) to bypass the phone."
+            "(`.venv/bin/python -m scripts.fitbit_auth`) to bypass the phone. "
+            "Pebble: Pebble app → Settings → Health → *Sync to Health Connect*."
         )
 
     try:
@@ -649,6 +653,8 @@ def run_daily_advisor() -> None:
         if silent_days >= 3:
             summary["watch_silent_days"] = silent_days
             summary["watch_last_date"] = silence.get("last_watch_date")
+        if device_txt:
+            summary["watch_devices"] = device_txt
 
     print_advice(advice)
     local_path = save_advice_local(config, advice)

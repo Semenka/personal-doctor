@@ -341,17 +341,18 @@ def start_server():
             from datetime import date as _date
             from app.sync.pipeline import watch_silence
 
+            from app.sync.pipeline import describe_device_silence
+
             silence = watch_silence(config, _date.fromisoformat(today_iso))
-            silent = int(silence.get("silent_days") or 0)
-            if silent >= 3:
+            device_txt = describe_device_silence(silence)
+            if device_txt:
                 logger.warning(
-                    f"⚠️ Self-check: watch silent {silent} days (last watch data: "
-                    f"{silence.get('last_watch_date') or 'never'}) — steps are "
-                    "phone-sensor only; run scripts.fitbit_auth or re-enable Google "
-                    "Fit ↔ Health Connect sync on the phone."
+                    f"⚠️ Self-check: {device_txt} — steps are phone-sensor only; "
+                    "Fitbit: scripts.fitbit_auth or Google Fit ↔ Health Connect sync; "
+                    "Pebble: app → Settings → Health → Sync to Health Connect."
                 )
             else:
-                logger.info("Self-check: watch data reporting.")
+                logger.info("Self-check: Fitbit Air and Pebble both reporting.")
         except Exception as exc:
             logger.warning(f"Self-check: Fitbit Air probe errored: {exc}")
 

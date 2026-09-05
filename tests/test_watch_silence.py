@@ -9,7 +9,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.sync.pipeline import payload_has_watch_data, watch_silence  # noqa: E402
+from app.sync.pipeline import (  # noqa: E402
+    describe_device_silence,
+    payload_devices,
+    payload_has_watch_data,
+    watch_silence,
+)
 from app.sync.trend_analyzer import (  # noqa: E402
     load_primary_wearable_history,
     overlay_ring_recovery,
@@ -46,7 +51,7 @@ def test_watch_silence_counts_back_to_last_watch_day(tmp_path):
         _write(tmp_path, f"fitbit_{d}.json", _phone_day())
     _write(tmp_path, "fitbit_2026-09-02.json", dict(_phone_day(), sleep_hours=7.1))
     s = watch_silence(cfg, date(2026, 9, 5))
-    assert s == {"silent_days": 3, "last_watch_date": "2026-09-02", "phone_only": True}
+    assert (s["silent_days"], s["last_watch_date"], s["phone_only"]) == (3, "2026-09-02", True)
 
 
 def test_watch_silence_zero_when_today_has_watch_data(tmp_path):
@@ -108,13 +113,14 @@ def test_whatsapp_digest_carries_watch_silent_line(monkeypatch, tmp_path):
     advice = {
         "date": "2026-09-06", "model": "codex",
         "advice": "1. **Walk** — after lunch\n2. **Nap** — 14:00",
-        "context_summary": {"watch_silent_days": 33, "watch_last_date": "2026-08-04"},
+        "context_summary": {"watch_silent_days": 33, "watch_last_date": "2026-08-04",
+                            "watch_devices": "Fitbit Air silent 33d · Pebble never"},
     }
     assert ws.send_whatsapp_advice(cfg, advice) is True
     lines = sent["msg"].splitlines()
     assert lines[0].startswith("🩺 Daily Plan — 2026-09-06")
-    assert lines[1].startswith("⚠️ Watch silent 33d (phone steps only")
-    assert "fitbit_auth" in lines[1]
+    assert lines[1].startswith("⚠️ Fitbit Air silent 33d · Pebble never (phone steps only")
+    assert "fitbit_auth" in lines[1] and "Sync to Health Connect" in lines[1]
 
 
 def test_whatsapp_digest_has_no_watch_line_when_watch_reports(monkeypatch, tmp_path):
@@ -127,3 +133,47 @@ def test_whatsapp_digest_has_no_watch_line_when_watch_reports(monkeypatch, tmp_p
     cfg = types.SimpleNamespace(data_dir=tmp_path, email_to="", smtp_host="")
     ws.send_whatsapp_advice(cfg, {"date": "2026-09-06", "model": "codex", "advice": "1. **Walk**", "context_summary": {}})
     assert "Watch silent" not in sent["msg"]
+
+
+PEBBLE = "raw:com.google.step_count.delta:coredevices.coreapp:health_platform"
+
+
+def test_pebble_official_app_package_is_recognised():
+    assert payload_devices(dict(_phone_day(), data_origins=[PIXEL, PEBBLE])) == {"pebble"}
+    assert payload_devices(dict(_phone_day(), data_origins=[PIXEL, FITBIT, PEBBLE])) == {"fitbit", "pebble"}
+    assert payload_devices(dict(_phone_day(), via="fitbit_web_api")) == {"fitbit"}
+    assert payload_devices(_phone_day()) == set()
+    assert payload_has_watch_data(dict(_phone_day(), data_origins=[PEBBLE]))
+    from app.sync.daily_advisor import _device_sources
+    assert _device_sources(dict(_phone_day(), data_origins=[PEBBLE, PIXEL])) == "Pebble, Pixel phone sensors"
+
+
+def test_legacy_file_without_origins_attributes_recovery_to_fitbit():
+    legacy = {"steps": 9000, "sleep_hours": 9.4, "hrv": 0.0, "resting_hr": 0}
+    assert payload_devices(legacy) == {"fitbit"}
+    assert payload_devices({"steps": 9000, "sleep_hours": 0.0}) == set()
+    # A modern file with origins but no watch origin stays unattributed.
+    assert payload_devices(dict(_phone_day(), sleep_hours=6.0)) == set()
+
+
+def test_per_device_silence_and_description(tmp_path):
+    cfg = types.SimpleNamespace(data_dir=tmp_path)
+    _write(tmp_path, "fitbit_2026-09-05.json", dict(_phone_day(), data_origins=[PIXEL, PEBBLE]))
+    _write(tmp_path, "fitbit_2026-09-04.json", _phone_day())
+    _write(tmp_path, "fitbit_2026-09-03.json", _phone_day())
+    _write(tmp_path, "fitbit_2026-09-02.json", _phone_day())
+    _write(tmp_path, "fitbit_2026-09-01.json", dict(_phone_day(), data_origins=[PIXEL, FITBIT]))
+    s = watch_silence(cfg, date(2026, 9, 5), lookback_days=10)
+    assert s["silent_days"] == 0 and s["last_watch_date"] == "2026-09-05"
+    assert s["devices"]["pebble"] == {"label": "Pebble", "silent_days": 0, "last_date": "2026-09-05"}
+    assert s["devices"]["fitbit"] == {"label": "Fitbit Air", "silent_days": 4, "last_date": "2026-09-01"}
+    assert describe_device_silence(s) == "Fitbit Air silent 4d"
+    assert describe_device_silence(s, min_days=5) == ""
+
+
+def test_description_says_never_for_a_device_with_no_history(tmp_path):
+    cfg = types.SimpleNamespace(data_dir=tmp_path)
+    for d in ("2026-09-05", "2026-09-04", "2026-09-03"):
+        _write(tmp_path, f"fitbit_{d}.json", _phone_day())
+    s = watch_silence(cfg, date(2026, 9, 5), lookback_days=3)
+    assert describe_device_silence(s) == "Fitbit Air never · Pebble never"

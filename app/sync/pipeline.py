@@ -349,9 +349,40 @@ def check_fitbit_freshness(
     }
 
 
+# The wearable fleet, keyed by the substrings that identify each device in a
+# Google Fit originDataSourceId. The official Pebble app's package is
+# ``coredevices.coreapp`` (no space — "core devices" alone never matched it);
+# ``io.rebble.cobble`` is the community app. daily_advisor builds its
+# "Recorded by" names from this table so the two never drift.
+WATCH_DEVICES = {
+    "fitbit": {"label": "Fitbit Air", "markers": ("fitbit",)},
+    "pebble": {
+        "label": "Pebble",
+        "markers": ("pebble", "rebble", "coredevices", "coreapp", "core devices", "cobble"),
+    },
+}
 # Origin substrings that prove a physical watch contributed to a payload.
-# (Mirrors daily_advisor._ORIGIN_DEVICE_PATTERNS minus the phone entry.)
-_WATCH_ORIGIN_MARKERS = ("fitbit", "pebble", "rebble", "core devices")
+_WATCH_ORIGIN_MARKERS = tuple(m for d in WATCH_DEVICES.values() for m in d["markers"])
+
+
+def payload_devices(payload: Dict[str, Any]) -> set:
+    """Which named watches contributed to this payload (by origin or cloud pull)."""
+    found = set()
+    if not payload:
+        return found
+    if "fitbit_web_api" in str(payload.get("via") or ""):
+        found.add("fitbit")
+    for origin in payload.get("data_origins") or []:
+        ol = str(origin).lower()
+        for key, dev in WATCH_DEVICES.items():
+            if any(m in ol for m in dev["markers"]):
+                found.add(key)
+    # Files written before 2026-08-28 carry no data_origins at all. In that
+    # era the Fitbit Air was the only watch, so a recovery metric in such a
+    # file is the Fitbit's (e.g. the 08-02..08-04 sleep nights).
+    if not found and "data_origins" not in payload and payload_has_watch_data(payload):
+        found.add("fitbit")
+    return found
 
 
 def payload_has_watch_data(payload: Dict[str, Any]) -> bool:
@@ -399,7 +430,11 @@ def watch_silence(
     silent_days = 0
     last_watch = None
     phone_steps_seen = False
-    counting = True
+    any_watch_seen = False
+    devices = {
+        key: {"label": dev["label"], "silent_days": 0, "last_date": None}
+        for key, dev in WATCH_DEVICES.items()
+    }
     for i in range(lookback_days + 1):
         d = (day - timedelta(days=i)).isoformat()
         try:
@@ -408,18 +443,48 @@ def watch_silence(
             payload = None
         except Exception:
             payload = None
-        if payload_has_watch_data(payload):
-            last_watch = d
+        seen = payload_devices(payload)
+        for key, dev in devices.items():
+            if dev["last_date"] is None:
+                if key in seen:
+                    dev["last_date"] = d
+                else:
+                    dev["silent_days"] += 1
+        if not any_watch_seen:
+            if payload_has_watch_data(payload):
+                last_watch = d
+                any_watch_seen = True
+            else:
+                silent_days += 1
+                if payload and (payload.get("steps") or 0) >= 500:
+                    phone_steps_seen = True
+        if any_watch_seen and all(dev["last_date"] for dev in devices.values()):
             break
-        if counting:
-            silent_days += 1
-            if payload and (payload.get("steps") or 0) >= 500:
-                phone_steps_seen = True
     return {
         "silent_days": silent_days,
         "last_watch_date": last_watch,
         "phone_only": silent_days > 0 and phone_steps_seen,
+        "devices": devices,
     }
+
+
+def describe_device_silence(silence: Dict[str, Any], min_days: int = 3) -> str:
+    """One short clause per silent watch, e.g. 'Fitbit Air silent 33d · Pebble never'.
+
+    Empty when every watch reported within ``min_days``. Shared by the
+    WhatsApp line, email banner, Sunday brief and boot self-check so all
+    four say the same thing about the same devices.
+    """
+    parts = []
+    for dev in (silence.get("devices") or {}).values():
+        days = int(dev.get("silent_days") or 0)
+        if days < min_days:
+            continue
+        if dev.get("last_date"):
+            parts.append(f"{dev['label']} silent {days}d")
+        else:
+            parts.append(f"{dev['label']} never")
+    return " · ".join(parts)
 
 
 def oura_data_is_fresh(payload: Dict[str, Any]) -> bool:

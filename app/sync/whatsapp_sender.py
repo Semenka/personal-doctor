@@ -441,15 +441,20 @@ def send_whatsapp_advice(config: SyncConfig, advice: Dict[str, Any]) -> bool:
     silent_days = summary.get("watch_silent_days") or 0
     if stale_days:
         lines.insert(1, f"⚠️ Fitbit Air not synced ({stale_days}d) — check Fitbit + Health Connect")
-    elif silent_days:
-        # Phone steps still arrive, so the old check stays green; the watch
-        # itself is silent. Name it and give the one-line fix.
-        lines.insert(
-            1,
-            f"⚠️ Watch silent {silent_days}d (phone steps only, no sleep/HRV) — "
-            "phone: Google Fit ↔ Health Connect sync is off (Fitbit+Oura relays "
-            "both stopped); or run fitbit_auth for the cloud",
-        )
+    elif silent_days or summary.get("watch_devices"):
+        # Phone steps still arrive, so the old check stays green; a watch
+        # itself is silent. Name each silent device and its one-line fix.
+        devices = summary.get("watch_devices") or ""
+        what = devices or f"Watch silent {silent_days}d"
+        fixes = []
+        if "Fitbit" in what:
+            fixes.append("Fitbit: Health Connect sync on phone or run fitbit_auth")
+        if "Pebble" in what:
+            fixes.append("Pebble app → Settings → Health → Sync to Health Connect")
+        line = f"⚠️ {what} (phone steps only, no sleep/HRV)"
+        if fixes:
+            line += " — " + "; ".join(fixes)
+        lines.insert(1, line)
     if backup:
         lines += _action_lines("🔁", "Backup", backup, 2)
     if micro_wins:

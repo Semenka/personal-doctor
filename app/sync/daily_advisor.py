@@ -231,13 +231,15 @@ def _last_measured(
 # user's wearable fleet: Fitbit Air (daily since 07-20), Pebble 2 / Time 2
 # (added 2026-08, syncs via Health Connect), plus phone sensors — the merged
 # aggregates hide which one contributed, so we surface it explicitly.
-_ORIGIN_DEVICE_PATTERNS = [
-    ("fitbit", "Fitbit Air"),
-    ("pebble", "Pebble 2 / Time 2"),
-    ("rebble", "Pebble 2 / Time 2"),
-    ("core devices", "Pebble 2 / Time 2"),
-    ("pixel", "Pixel phone sensors"),
-]
+def _origin_patterns() -> List[tuple]:
+    from .pipeline import WATCH_DEVICES
+
+    pats = [(m, dev["label"]) for dev in WATCH_DEVICES.values() for m in dev["markers"]]
+    pats.append(("pixel", "Pixel phone sensors"))
+    return pats
+
+
+_ORIGIN_DEVICE_PATTERNS = _origin_patterns()
 
 
 def _device_sources(payload: Dict[str, Any]) -> str:
@@ -254,18 +256,31 @@ def _device_sources(payload: Dict[str, Any]) -> str:
 def _watch_silence_note(silence: Dict[str, Any]) -> str:
     """Tell the model when the watch itself is silent so absent sleep/HRV is
     read as a broken relay, not a bad night — and so the plan can say so."""
+    from .pipeline import describe_device_silence
+
     days = int(silence.get("silent_days") or 0)
-    if days < 3:
+    per_device = describe_device_silence(silence)
+    if days < 3 and not per_device:
         return ""
-    last = silence.get("last_watch_date")
-    since = f" (last watch data: {last})" if last else " (no watch data on record)"
+    if days >= 3:
+        last = silence.get("last_watch_date")
+        since = f" (last watch data: {last})" if last else " (no watch data on record)"
+        head = (
+            f"\nWATCH STATUS: no data from any watch has reached this pipeline "
+            f"for {days} days{since}"
+        )
+        if per_device:
+            head += f" — {per_device}"
+        return head + (
+            ". Steps above come from the phone's own sensor. Sleep, HRV, resting "
+            "HR and SpO2 are absent for that reason — never as a reading. Do not "
+            "assess recovery from them; if you mention the wearable, say it is "
+            "not syncing and that re-enabling its Health Connect sync on the "
+            "phone (or the Fitbit cloud login) restores it."
+        )
     return (
-        f"\nWATCH STATUS: no data from the Fitbit Air or Pebble has reached this "
-        f"pipeline for {days} days{since}. Steps above come from the phone's own "
-        "sensor. Sleep, HRV, resting HR and SpO2 are absent for that reason — "
-        "never as a reading. Do not assess recovery from them; if you mention "
-        "the wearable, say it is not syncing and that fixing the Fitbit app -> "
-        "Health Connect link (or the Fitbit cloud login) restores it."
+        f"\nWATCH STATUS: {per_device} — one watch is reporting, the other is "
+        "not. Do not infer anything from the silent one's missing metrics."
     )
 
 
