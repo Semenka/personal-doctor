@@ -224,6 +224,9 @@ def fitbit_to_daily_payload(day: date, summary: Dict[str, Any]) -> Dict[str, Any
         "distance_km": round(float(distance_km), 2),
         "floors": int(floors),
         "source": "fitbit",
+        # Transport marker: this payload came straight from Fitbit's cloud,
+        # not through the phone's Health Connect -> Google Fit relay.
+        "via": "fitbit_web_api",
         "activity_is_previous_day": False,
     }
 
@@ -233,6 +236,42 @@ def load_fitbit_daily(config: SyncConfig, day: date) -> Dict[str, Any]:
 
     summary = fitbit_fetch(config, day)
     return fitbit_to_daily_payload(day, summary)
+
+
+# Keys that describe the payload rather than measure the day; never filled
+# across sources by merge_fitbit_payloads.
+_MERGE_META_KEYS = frozenset(
+    {"date", "source", "via", "data_origins", "activity_is_previous_day"}
+)
+
+
+def merge_fitbit_payloads(
+    primary: Dict[str, Any], secondary: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Overlay two same-day Fitbit payloads: primary wins, secondary fills gaps.
+
+    Used when both the Fitbit Web API (cloud) and Google Health (phone relay)
+    are authorized. The cloud is authoritative for every metric it reports;
+    a metric the primary left at 0/None is taken from the secondary. The
+    secondary's ``data_origins`` are kept so a device that only reaches us via
+    Health Connect (the Pebble) stays attributable, and ``via`` records both
+    transports.
+    """
+    merged = dict(primary)
+    for key, value in secondary.items():
+        if key in _MERGE_META_KEYS:
+            continue
+        current = merged.get(key)
+        if current in (None, 0, 0.0) and value not in (None, 0, 0.0, False):
+            merged[key] = value
+    origins = set(primary.get("data_origins") or []) | set(
+        secondary.get("data_origins") or []
+    )
+    merged["data_origins"] = sorted(origins)
+    vias = [v for v in (primary.get("via"), secondary.get("via")) if v]
+    if vias:
+        merged["via"] = "+".join(vias)
+    return merged
 
 
 def google_health_to_daily_payload(day: date, gh: Dict[str, Any]) -> Dict[str, Any]:
