@@ -594,9 +594,12 @@ def run_daily_advisor() -> None:
             f"### ⚠️ Watch not syncing — {silent_days} days without Fitbit Air / "
             f"Pebble data ({last_txt})\n\n"
             "Steps below are the phone's own sensor; sleep, HRV, resting HR and "
-            "SpO2 are missing, not low. Fix on the phone: Fitbit app → Settings → "
-            "Health Connect → allow *write* for sleep/heart/SpO2, then Google Fit → "
-            "Health Connect → allow *read*. Or link the Fitbit cloud once "
+            "SpO2 are missing, not low. Google Fit's streams show the Health "
+            "Connect relay died for *both* the Fitbit and Oura apps (heart rate "
+            "2026-06-13, sleep 2026-08-04), so the break is on the phone's Google "
+            "Fit ↔ Health Connect link: Google Fit → Profile → Settings → Health "
+            "Connect → re-enable sync and *read* for sleep/heart/SpO2; then Fitbit "
+            "app → Health Connect → *write* on. Or link the Fitbit cloud once "
             "(`.venv/bin/python -m scripts.fitbit_auth`) to bypass the phone."
         )
 

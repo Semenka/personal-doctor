@@ -447,7 +447,8 @@ def send_whatsapp_advice(config: SyncConfig, advice: Dict[str, Any]) -> bool:
         lines.insert(
             1,
             f"⚠️ Watch silent {silent_days}d (phone steps only, no sleep/HRV) — "
-            "Fitbit app → Health Connect → allow sleep+heart, or run fitbit_auth",
+            "phone: Google Fit ↔ Health Connect sync is off (Fitbit+Oura relays "
+            "both stopped); or run fitbit_auth for the cloud",
         )
     if backup:
         lines += _action_lines("🔁", "Backup", backup, 2)

@@ -347,8 +347,8 @@ def start_server():
                 logger.warning(
                     f"⚠️ Self-check: watch silent {silent} days (last watch data: "
                     f"{silence.get('last_watch_date') or 'never'}) — steps are "
-                    "phone-sensor only; run scripts.fitbit_auth or fix Fitbit → "
-                    "Health Connect on the phone."
+                    "phone-sensor only; run scripts.fitbit_auth or re-enable Google "
+                    "Fit ↔ Health Connect sync on the phone."
                 )
             else:
                 logger.info("Self-check: watch data reporting.")
