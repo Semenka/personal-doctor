@@ -95,3 +95,35 @@ def test_history_overlays_ring_nights_onto_fitbit_days(tmp_path):
     assert h[0]["hrv"] == 19.0 and h[0]["recovery_source"] == "oura"
     assert h[1]["hrv"] == 0.0 and "recovery_source" not in h[1]
     assert h[0]["source"] == "fitbit"
+
+
+def test_whatsapp_digest_carries_watch_silent_line(monkeypatch, tmp_path):
+    from app.sync import whatsapp_sender as ws
+
+    sent = {}
+    monkeypatch.setattr(ws, "_run_openclaw_send", lambda msg, target=None: (sent.setdefault("msg", msg), True)[1])
+    monkeypatch.setattr(ws, "_completion_footer", lambda cfg: "✅ footer")
+    monkeypatch.setattr(ws, "_yesterday_activity_line", lambda cfg, day: "")
+    cfg = types.SimpleNamespace(data_dir=tmp_path, email_to="", smtp_host="")
+    advice = {
+        "date": "2026-09-06", "model": "codex",
+        "advice": "1. **Walk** — after lunch\n2. **Nap** — 14:00",
+        "context_summary": {"watch_silent_days": 33, "watch_last_date": "2026-08-04"},
+    }
+    assert ws.send_whatsapp_advice(cfg, advice) is True
+    lines = sent["msg"].splitlines()
+    assert lines[0].startswith("🩺 Daily Plan — 2026-09-06")
+    assert lines[1].startswith("⚠️ Watch silent 33d (phone steps only")
+    assert "fitbit_auth" in lines[1]
+
+
+def test_whatsapp_digest_has_no_watch_line_when_watch_reports(monkeypatch, tmp_path):
+    from app.sync import whatsapp_sender as ws
+
+    sent = {}
+    monkeypatch.setattr(ws, "_run_openclaw_send", lambda msg, target=None: (sent.setdefault("msg", msg), True)[1])
+    monkeypatch.setattr(ws, "_completion_footer", lambda cfg: "✅ footer")
+    monkeypatch.setattr(ws, "_yesterday_activity_line", lambda cfg, day: "")
+    cfg = types.SimpleNamespace(data_dir=tmp_path, email_to="", smtp_host="")
+    ws.send_whatsapp_advice(cfg, {"date": "2026-09-06", "model": "codex", "advice": "1. **Walk**", "context_summary": {}})
+    assert "Watch silent" not in sent["msg"]
