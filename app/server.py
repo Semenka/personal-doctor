@@ -48,7 +48,7 @@ def create_app() -> FastAPI:
     # ── Health check ──
     @dashboard_app.get("/health")
     async def health():
-        return JSONResponse({
+        body = {
             "status": "ok",
             "timestamp": datetime.now(tz=config.timezone).isoformat(),
             "timezone": str(config.timezone),
@@ -59,7 +59,15 @@ def create_app() -> FastAPI:
                 "smtp": bool(config.smtp_host and config.smtp_password),
                 "gdrive": bool(config.gdrive_credentials_dir),
             },
-        })
+        }
+        # Is wearable data actually arriving? "services" only says which
+        # credentials exist; this says which watches reported and when, so
+        # "check my health status" (OpenClaw) answers the real question.
+        try:
+            body["wearables"] = wearable_status(config)
+        except Exception as exc:
+            body["wearables"] = {"error": str(exc)}
+        return JSONResponse(body)
 
     # ── On-demand pipeline trigger ──
     @dashboard_app.post("/run")
@@ -226,6 +234,61 @@ def create_app() -> FastAPI:
         return _render_dashboard(today, history, streaks, averages, trends, config)
 
     return dashboard_app
+
+
+def wearable_status(config, today=None) -> dict:
+    """Which transports are authorized and which watches reported, by day.
+
+    Reads only on-disk state (token files, fitbit_<date>.json) — no API call —
+    so it is safe to hit from a health probe. ``today`` is injectable for tests.
+    """
+    from app.sync.connectors import fitbit as fb
+    from app.sync.connectors import google_health as gh
+    from app.sync.connectors import google_health_api as gha
+    from app.sync.pipeline import (
+        describe_device_silence,
+        fitbit_data_is_fresh,
+        watch_silence,
+    )
+    from app.sync.storage import load_wearable_payload_file
+
+    if today is None:
+        today = datetime.now(tz=config.timezone).date()
+    transports = {}
+    for name, mod in (("google_health_api", gha), ("google_health_relay", gh)):
+        try:
+            transports[name] = bool(mod.has_credentials(config))
+        except Exception:
+            transports[name] = False
+    try:
+        transports["fitbit_web_api"] = bool(fb.has_credentials(config))
+    except Exception:
+        transports["fitbit_web_api"] = False
+
+    today_iso = today.isoformat()
+    try:
+        payload = load_wearable_payload_file(config.data_dir, today_iso, source="fitbit")
+    except FileNotFoundError:
+        payload = None
+    silence = watch_silence(config, today)
+    devices = {
+        key: {"silent_days": dev["silent_days"], "last_date": dev["last_date"]}
+        for key, dev in (silence.get("devices") or {}).items()
+    }
+    return {
+        "transports_authorized": transports,
+        "today_file": None if payload is None else {
+            "via": payload.get("via"),
+            "steps": payload.get("steps") or 0,
+            "sleep_hours": payload.get("sleep_hours") or 0,
+            "fresh": fitbit_data_is_fresh(payload),
+        },
+        "watch_silent_days": silence.get("silent_days"),
+        "last_watch_date": silence.get("last_watch_date"),
+        "phone_only": bool(silence.get("phone_only")),
+        "devices": devices,
+        "summary": describe_device_silence(silence) or "all watches reporting",
+    }
 
 
 def start_server():

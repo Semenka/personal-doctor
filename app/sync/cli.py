@@ -19,7 +19,7 @@ from .storage import (
 
 def main() -> None:
     all_sources = [
-        "oura", "blood", "urine", "annual",
+        "oura", "fitbit", "blood", "urine", "annual",
         "genetic", "sperm", "conclusion", "prescription",
         "health_check", "research", "gdrive", "oura-analytics",
         "advisor", "scan",
@@ -61,6 +61,13 @@ def main() -> None:
             print(f"Uploaded Oura data to Drive: me/health/{day.strftime('%Y/%m/%d')}/")
         elif args.upload:
             print("Warning: --upload requested but GDRIVE_CREDENTIALS_DIR not set.")
+        return
+
+    # --- Fitbit Air (+ Pebble) daily sync: same job the service runs at 07:40 ---
+    if args.source == "fitbit":
+        from .scheduler import run_fitbit_sync
+
+        run_fitbit_sync()
         return
 
     # --- Research sync ---

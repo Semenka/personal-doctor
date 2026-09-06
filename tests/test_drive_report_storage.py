@@ -59,11 +59,14 @@ class DriveReportStorageTests(unittest.TestCase):
     def test_schedule_reads_date_from_drive_report_filename(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             data_dir = Path(tmp)
+            # A result only counts once it carries extracted content
+            # (biomarkers or enough text) — an empty OCR pass must not roll
+            # a checkup forward. Give this one real biomarkers.
             write_lab_document_json(
                 data_dir,
                 "sperm_test",
                 "2026-08-08",
-                {"kind": "sperm_test", "drive_file_id": "drive-a"},
+                {"kind": "sperm_test", "drive_file_id": "drive-a", "biomarker_count": 5},
             )
 
             self.assertEqual(
