@@ -344,47 +344,69 @@ def _fitbit_payload_improves(old, new) -> bool:
 
 
 def run_fitbit_sync() -> None:
-    """07:43 — pull the day's Fitbit (bracelet) data into fitbit_<date>.json.
+    """07:40 — pull the day's Fitbit Air data into fitbit_<date>.json.
 
-    Transport preference:
-      1. Google Health (Fitness API) — the current registration path; Fitbit's
-         standalone dev portal is closed to new apps. Uses the same Google
-         Cloud OAuth client as the Drive sync.
-      2. Legacy Fitbit Web API — only if its old token exists.
+    Transport preference (verified 2026-09-05):
+      1. Fitbit Web API — reads Fitbit's own cloud, so it carries sleep
+         staging, HRV, resting HR, SpO2 and breathing rate regardless of the
+         phone. Authorized once via ``scripts.fitbit_auth``.
+      2. Google Health (Fitness API) — the phone's Health Connect -> Google
+         Fit relay. It stopped carrying any Fitbit-origin data on 2026-08-04;
+         since then it only delivers the Pixel's own step counter. It is still
+         the only path a Health Connect-only device (Pebble) can take, so when
+         both are authorized the cloud payload is primary and this one fills
+         gaps and contributes ``data_origins``.
       3. Neither configured → graceful no-op with a clear authorization warning.
     """
     from datetime import datetime
 
     config = load_config()
-    loader = None
-    label = ""
+    loaders = []  # (callable, label) in preference order
+    try:
+        from .connectors.fitbit import has_credentials as fb_has
+
+        if fb_has(config):
+            from .pipeline import load_fitbit_daily
+
+            loaders.append((load_fitbit_daily, "fitbit-web-api"))
+    except Exception as exc:
+        print(f"Fitbit connector unavailable: {exc}")
+
     try:
         from .connectors.google_health import has_credentials as gh_has
 
         if gh_has(config):
             from .pipeline import load_fitbit_via_google_health
 
-            loader, label = load_fitbit_via_google_health, "google-health"
+            loaders.append((load_fitbit_via_google_health, "google-health"))
     except Exception as exc:
         print(f"Google Health connector unavailable: {exc}")
 
-    if loader is None:
-        try:
-            from .connectors.fitbit import has_credentials as fb_has
-
-            if fb_has(config):
-                from .pipeline import load_fitbit_daily
-
-                loader, label = load_fitbit_daily, "fitbit-web-api"
-        except Exception as exc:
-            print(f"Fitbit connector unavailable: {exc}")
-
-    if loader is None:
+    if not loaders:
         print(
             "Skipping Fitbit sync: not authorized. Run "
-            ".venv/bin/python -m scripts.google_health_auth (one-time consent)."
+            ".venv/bin/python -m scripts.fitbit_auth (Fitbit cloud, preferred) or "
+            ".venv/bin/python -m scripts.google_health_auth (phone relay)."
         )
         return
+
+    if len(loaders) == 1:
+        loader, label = loaders[0]
+    else:
+        from .pipeline import merge_fitbit_payloads
+
+        (primary_loader, primary_label), (secondary_loader, secondary_label) = loaders[:2]
+
+        def loader(cfg, d):
+            primary = primary_loader(cfg, d)
+            try:
+                secondary = secondary_loader(cfg, d)
+            except Exception as exc:  # the relay must never sink the cloud pull
+                print(f"Fitbit sync: {secondary_label} merge skipped for {d}: {exc}")
+                return primary
+            return merge_fitbit_payloads(primary, secondary)
+
+        label = f"{primary_label}+{secondary_label}"
 
     from datetime import timedelta
 

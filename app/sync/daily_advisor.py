@@ -243,8 +243,12 @@ _ORIGIN_DEVICE_PATTERNS = _origin_patterns()
 
 
 def _device_sources(payload: Dict[str, Any]) -> str:
-    """Friendly device names behind today's merged Health Connect data."""
+    """Friendly device names behind today's wearable payload."""
     found: List[str] = []
+    # A Fitbit-cloud pull is the Fitbit Air by definition, even when the phone
+    # relay contributed no Fitbit-named origin (it has not since 2026-08-04).
+    if "fitbit_web_api" in str(payload.get("via") or ""):
+        found.append("Fitbit Air")
     for o in payload.get("data_origins") or []:
         ol = str(o).lower()
         for pat, name in _ORIGIN_DEVICE_PATTERNS:
