@@ -89,20 +89,23 @@ def main() -> int:
         return 1
 
     if args.manual:
-        flow = _flow(config, MANUAL_REDIRECT if args.via_google else LOCAL_REDIRECT)
+        # Shared with the Mac Mini's /auth/google-health page. The PKCE
+        # verifier is persisted between the two steps; a fresh Flow on the
+        # --redirect step (the previous version) could never exchange the code.
+        from app.sync import google_health_link as link
+
+        redirect_uri = MANUAL_REDIRECT if args.via_google else LOCAL_REDIRECT
         if not args.redirect:
-            url, _ = flow.authorization_url(access_type="offline", prompt="consent")
+            url = link.build_consent_url(config, redirect_uri)
             print("Open this URL on any device, sign in, click Allow, then copy the final URL "
                   "from the address bar (the localhost page will not load on a phone — that is fine):")
             print("AUTH_URL_BEGIN")
             print(url)
             print("AUTH_URL_END")
             print("Then run: .venv/bin/python -m scripts.google_health_api_auth --manual --redirect '<final url>'")
+            print(f"Or paste it on the phone page: {config.server_url}/auth/google-health")
             return 0
-        raw = args.redirect.strip()
-        code = urllib.parse.parse_qs(urllib.parse.urlparse(raw).query).get("code", [raw])[0] if "://" in raw else raw
-        flow.fetch_token(code=code)
-        tok = _save(config, flow.credentials)
+        tok = link.exchange(config, args.redirect)
         print(f"✅ Google Health API token saved to {tok}")
         _verify(config)
         return 0

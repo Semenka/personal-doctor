@@ -21,6 +21,7 @@ second digest. This skill is the on-demand interface.
 | Say | Run |
 |-----|-----|
 | "Check my health status" / "Is my watch data coming?" | `curl -s http://localhost:8000/health` — read the `wearables` block (see below) |
+| "Link my Fitbit / Google Health cloud" | send the user `{SERVER_URL}/auth/google-health` (see *Repairing the watch feed*) |
 | "Run my health pipeline" | `cd ~/personal-doctor && .venv/bin/python -m app.sync.run_pipeline` |
 | "Sync my Fitbit / watch data" | `cd ~/personal-doctor && .venv/bin/python -m app.sync.cli --source fitbit` |
 | "Sync my Oura data" (ring is worn only occasionally) | `cd ~/personal-doctor && .venv/bin/python -m app.sync.cli --source oura` |
@@ -81,11 +82,14 @@ Always report the command's own output back to the user (the sync jobs print
 
 1. **Fitbit Air, permanent fix — link its cloud once** (bypasses the phone):
    - Cloud Console → enable *Google Health API* on the project the Drive
-     sync uses.
-   - On the Mac Mini: `cd ~/personal-doctor && .venv/bin/python -m scripts.google_health_api_auth`
-     (or `--manual` to consent from a phone). The token lands in
-     `data/ingested/.google_health_api_token.json` and the 07:40 sync prefers
-     it automatically.
+     sync uses; the OAuth web client's redirect URIs must include
+     `http://localhost:8770/`.
+   - **From the phone:** open `{SERVER_URL}/auth/google-health` (the service
+     WhatsApps this link once a day while unlinked). Tap *Authorize* → *Allow*
+     → copy the address-bar URL → paste it back on the page. Same flow on the
+     Mac: `.venv/bin/python -m scripts.google_health_api_auth` (or `--manual`).
+     The token lands in `data/ingested/.google_health_api_token.json` and the
+     07:40 sync prefers it automatically.
    - Publish the OAuth consent screen (Testing → Production) or the refresh
      token dies every 7 days; the sync then WhatsApps a "sync is DOWN" alert.
 2. **Fitbit Air, phone relay**: Google Fit → Profile → Settings → Health

@@ -123,9 +123,10 @@ def main() -> int:
                 f"### ⚠️ Watch not syncing — {headline} ({last_txt})\n\n"
                 "Steps below are the phone's own sensor; sleep, HRV, resting HR and "
                 "SpO2 are missing, not low. Fitbit Air: link the Google Health cloud "
-                "once (`.venv/bin/python -m scripts.google_health_api_auth`) or fix the "
-                "phone's Google Fit ↔ Health Connect sync. Pebble: Pebble app → "
-                "Settings → Health → *Sync to Health Connect*."
+                f"once from your phone at {config.server_url}/auth/google-health "
+                "(or `.venv/bin/python -m scripts.google_health_api_auth` on the Mac), "
+                "or fix the phone's Google Fit ↔ Health Connect sync. Pebble: Pebble "
+                "app → Settings → Health → *Sync to Health Connect*."
             )
             print(f"  NOTE: {headline} ({last_txt}). Generating full advice with a banner.")
 

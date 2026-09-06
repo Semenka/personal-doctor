@@ -404,10 +404,10 @@ def run_fitbit_sync() -> None:
 
     if not loaders:
         print(
-            "Skipping Fitbit sync: not authorized. Run "
+            "Skipping Fitbit sync: not authorized. Link the cloud from your phone at "
+            f"{config.server_url}/auth/google-health, or run "
             ".venv/bin/python -m scripts.google_health_api_auth (Fitbit Air + Pebble "
-            "cloud, preferred) or .venv/bin/python -m scripts.google_health_auth "
-            "(phone relay)."
+            "cloud, preferred) / scripts.google_health_auth (phone relay) on the Mac."
         )
         return
 
@@ -646,8 +646,9 @@ def run_daily_advisor() -> None:
             "2026-06-13, sleep 2026-08-04), so the break is on the phone's Google "
             "Fit ↔ Health Connect link: Google Fit → Profile → Settings → Health "
             "Connect → re-enable sync and *read* for sleep/heart/SpO2; then Fitbit "
-            "app → Health Connect → *write* on. Or link the Google Health cloud once "
-            "(`.venv/bin/python -m scripts.google_health_api_auth`) to bypass the phone. "
+            "app → Health Connect → *write* on. Or link the Google Health cloud once to "
+            f"bypass the phone — from your phone: {config.server_url}/auth/google-health "
+            "(or `.venv/bin/python -m scripts.google_health_api_auth` on the Mac). "
             "Pebble: Pebble app → Settings → Health → *Sync to Health Connect*."
         )
 

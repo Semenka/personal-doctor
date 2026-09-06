@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Optional
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse, JSONResponse
 
 # Configure logging to both stdout and file
@@ -68,6 +68,37 @@ def create_app() -> FastAPI:
         except Exception as exc:
             body["wearables"] = {"error": str(exc)}
         return JSONResponse(body)
+
+    # ── Link the Google Health API (Fitbit Air + Pebble cloud) from a phone ──
+    @dashboard_app.get("/auth/google-health", response_class=HTMLResponse)
+    async def google_health_link_page():
+        from app.sync import google_health_link as link
+
+        try:
+            url = link.build_consent_url(config)
+            return HTMLResponse(link.render_page(config, consent_url=url))
+        except Exception as exc:
+            return HTMLResponse(link.render_page(config, error=str(exc)))
+
+    @dashboard_app.post("/auth/google-health", response_class=HTMLResponse)
+    async def google_health_link_submit(redirect: str = Form("")):
+        from app.sync import google_health_link as link
+
+        try:
+            tok = link.exchange(config, redirect)
+            logger.info(f"Google Health API linked from the web page: {tok}")
+        except Exception as exc:
+            logger.warning(f"Google Health API link failed: {exc}")
+            try:
+                url = link.build_consent_url(config)
+            except Exception:
+                url = None
+            return HTMLResponse(link.render_page(config, consent_url=url, error=str(exc)))
+        try:
+            result = link.verify(config)
+        except Exception as exc:
+            result = {"errors": [f"verification pull failed: {exc}"], "origins": []}
+        return HTMLResponse(link.render_page(config, result=result))
 
     # ── On-demand pipeline trigger ──
     @dashboard_app.post("/run")
@@ -423,6 +454,19 @@ def start_server():
                 logger.info("Self-check: Fitbit Air and Pebble both reporting.")
         except Exception as exc:
             logger.warning(f"Self-check: Fitbit Air probe errored: {exc}")
+        # 3. Cloud not linked → send the phone link page (once a day) so the
+        #    fix is one tap away instead of a Mac Mini terminal session.
+        try:
+            from app.sync import google_health_link as link
+
+            if not link.is_linked(config):
+                sent = link.nudge_if_unlinked(config)
+                logger.warning(
+                    f"⚠️ Self-check: Google Health API not linked — link page "
+                    f"{config.server_url}/auth/google-health (WhatsApp nudge sent={sent})."
+                )
+        except Exception as exc:
+            logger.warning(f"Self-check: link nudge errored: {exc}")
 
     import threading
     threading.Thread(target=_self_check, daemon=True).start()
