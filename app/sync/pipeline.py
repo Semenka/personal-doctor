@@ -241,7 +241,7 @@ def load_fitbit_daily(config: SyncConfig, day: date) -> Dict[str, Any]:
 # Keys that describe the payload rather than measure the day; never filled
 # across sources by merge_fitbit_payloads.
 _MERGE_META_KEYS = frozenset(
-    {"date", "source", "via", "data_origins", "activity_is_previous_day"}
+    {"date", "source", "via", "data_origins", "activity_is_previous_day", "fetch_errors"}
 )
 
 
@@ -327,6 +327,66 @@ def google_health_to_daily_payload(day: date, gh: Dict[str, Any]) -> Dict[str, A
         "data_origins": list(gh.get("data_origins") or []),
         "activity_is_previous_day": False,
     }
+
+
+def google_health_api_to_daily_payload(day: date, g: Dict[str, Any]) -> Dict[str, Any]:
+    """Map a Google Health API day (connectors.google_health_api) onto the schema.
+
+    This is the Fitbit Air's own cloud (and, via the Google Health app's
+    Health Connect import, the Pebble's), so it carries what the phone relay
+    never did: sleep stages, resting HR, HRV (RMSSD), SpO2, breathing rate.
+    ``source`` stays "fitbit" so every consumer keeps reading
+    fitbit_<date>.json; ``via`` records the transport; ``data_origins`` keeps
+    per-point provenance so WATCH_DEVICES can name the device.
+    """
+    sleep_min = float(g.get("sleep_minutes") or 0)
+    period = float(g.get("sleep_period_min") or 0)
+    efficiency = int(round(100 * sleep_min / period)) if period and sleep_min else 0
+    return {
+        "date": day.isoformat(),
+        "sleep_hours": round(sleep_min / 60, 2),
+        "sleep_quality": 0,
+        "readiness_score": 0,
+        "activity_score": 0,
+        "steps": int(g.get("steps") or 0),
+        "active_minutes": int(g.get("active_minutes") or 0),
+        "resting_hr": int(g.get("resting_hr") or 0),
+        "avg_hr": round(float(g.get("avg_hr") or 0), 1),
+        "hrv": round(float(g.get("hrv") or 0), 1),
+        "avg_breath": round(float(g.get("breathing_rate") or 0), 1),
+        "efficiency": efficiency,
+        "temp_deviation": 0.0,
+        "calories": 0,
+        "active_calories": 0,
+        "sitting_hours": 0.0,
+        "deep_sleep_min": int(g.get("deep_min") or 0),
+        "rem_sleep_min": int(g.get("rem_min") or 0),
+        "light_sleep_min": int(g.get("light_min") or 0),
+        "protein_g": 0,
+        "carbs_g": 0,
+        "fat_g": 0,
+        "water_l": 0,
+        "mood": 0,
+        "stress": 0,
+        "spo2": round(float(g.get("spo2") or 0), 1),
+        "active_zone_minutes": int(g.get("active_zone_minutes") or 0),
+        "vo2max": 0.0,
+        "distance_km": 0.0,
+        "floors": 0,
+        "source": "fitbit",
+        "via": "google_health_api",
+        "data_origins": list(g.get("data_origins") or []),
+        "sleep_start": g.get("sleep_start"),
+        "sleep_end": g.get("sleep_end"),
+        "fetch_errors": list(g.get("errors") or []),
+        "activity_is_previous_day": False,
+    }
+
+
+def load_fitbit_via_google_health_api(config: SyncConfig, day: date) -> Dict[str, Any]:
+    from .connectors.google_health_api import fetch_daily_summary as api_fetch
+
+    return google_health_api_to_daily_payload(day, api_fetch(config, day))
 
 
 def load_fitbit_via_google_health(config: SyncConfig, day: date) -> Dict[str, Any]:

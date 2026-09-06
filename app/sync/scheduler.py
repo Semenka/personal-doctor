@@ -363,6 +363,16 @@ def run_fitbit_sync() -> None:
     config = load_config()
     loaders = []  # (callable, label) in preference order
     try:
+        from .connectors.google_health_api import has_credentials as api_has
+
+        if api_has(config):
+            from .pipeline import load_fitbit_via_google_health_api
+
+            loaders.append((load_fitbit_via_google_health_api, "google-health-api"))
+    except Exception as exc:
+        print(f"Google Health API connector unavailable: {exc}")
+
+    try:
         from .connectors.fitbit import has_credentials as fb_has
 
         if fb_has(config):
@@ -385,8 +395,9 @@ def run_fitbit_sync() -> None:
     if not loaders:
         print(
             "Skipping Fitbit sync: not authorized. Run "
-            ".venv/bin/python -m scripts.fitbit_auth (Fitbit cloud, preferred) or "
-            ".venv/bin/python -m scripts.google_health_auth (phone relay)."
+            ".venv/bin/python -m scripts.google_health_api_auth (Fitbit Air + Pebble "
+            "cloud, preferred) or .venv/bin/python -m scripts.google_health_auth "
+            "(phone relay)."
         )
         return
 
@@ -395,18 +406,19 @@ def run_fitbit_sync() -> None:
     else:
         from .pipeline import merge_fitbit_payloads
 
-        (primary_loader, primary_label), (secondary_loader, secondary_label) = loaders[:2]
+        (primary_loader, primary_label) = loaders[0]
+        secondaries = loaders[1:]
 
         def loader(cfg, d):
-            primary = primary_loader(cfg, d)
-            try:
-                secondary = secondary_loader(cfg, d)
-            except Exception as exc:  # the relay must never sink the cloud pull
-                print(f"Fitbit sync: {secondary_label} merge skipped for {d}: {exc}")
-                return primary
-            return merge_fitbit_payloads(primary, secondary)
+            merged = primary_loader(cfg, d)
+            for sec_loader, sec_label in secondaries:
+                try:
+                    merged = merge_fitbit_payloads(merged, sec_loader(cfg, d))
+                except Exception as exc:  # a lower source must never sink the primary
+                    print(f"Fitbit sync: {sec_label} merge skipped for {d}: {exc}")
+            return merged
 
-        label = f"{primary_label}+{secondary_label}"
+        label = "+".join([primary_label] + [lbl for _, lbl in secondaries])
 
     from datetime import timedelta
 
