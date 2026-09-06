@@ -3,7 +3,7 @@
 # sync-and-relaunch.sh — Pull latest from GitHub, relaunch everything
 #
 # Pulls from origin/main, reinstalls deps if needed, restarts:
-#   1. OpenClaw skill (re-copies skill files)
+#   1. OpenClaw skill (re-copies skill files; removes stale pipeline crons)
 #   2. Docker containers (docker-compose rebuild)
 #   3. Python launchd service (if running on macOS)
 #
@@ -98,36 +98,17 @@ else
     warn "No OpenClaw skill directory found"
 fi
 
-# Refresh OpenClaw cron jobs
+# Remove the OpenClaw cron jobs earlier versions of this script re-added
+# every morning. They duplicated the launchd service's own 07:38 → 08:00
+# chain (a second run_pipeline at 07:50, an Oura-only sync at 07:40) and,
+# when they fired, would have sent the digest twice. Scheduling lives in
+# app/server.py; the OpenClaw skill is the on-demand interface.
 if command -v openclaw &>/dev/null; then
-    PYTHON_CMD="$VENV_DIR/bin/python"
-
-    # Remove old cron jobs and re-add them (picks up any schedule changes)
     for job_name in "personal-doctor-daily" "personal-doctor-oura" "personal-doctor-gdrive"; do
-        openclaw cron rm "$job_name" 2>/dev/null || true
+        openclaw cron rm "$job_name" 2>/dev/null && info "Removed stale OpenClaw cron: $job_name" || true
     done
-
-    openclaw cron add \
-        --name "personal-doctor-daily" \
-        --cron "50 7 * * *" \
-        --message "Run my health pipeline now. Execute: cd $REPO_DIR && $PYTHON_CMD -m app.sync.run_pipeline 2>&1 | tee -a $LOG_DIR/pipeline.log. Then summarize the output." \
-        2>/dev/null && info "Cron: daily pipeline at 07:50" || warn "Could not set cron: personal-doctor-daily"
-
-    openclaw cron add \
-        --name "personal-doctor-oura" \
-        --cron "40 7 * * *" \
-        --message "Sync my Oura Ring data. Execute: cd $REPO_DIR && $PYTHON_CMD -m app.sync.cli --source oura 2>&1. Report the result briefly." \
-        2>/dev/null && info "Cron: Oura sync at 07:40" || warn "Could not set cron: personal-doctor-oura"
-
-    openclaw cron add \
-        --name "personal-doctor-gdrive" \
-        --cron "30 7 * * *" \
-        --message "Scan my Google Drive health folder for new reports. Execute: cd $REPO_DIR && $PYTHON_CMD -m app.sync.cli --source gdrive 2>&1. Report any new files found." \
-        2>/dev/null && info "Cron: Drive scan at 07:30" || warn "Could not set cron: personal-doctor-gdrive"
-
-    info "OpenClaw cron jobs refreshed"
 else
-    warn "OpenClaw CLI not found — skipping cron refresh"
+    warn "OpenClaw CLI not found — skipping cron cleanup"
 fi
 
 # ── Restart Docker containers ──

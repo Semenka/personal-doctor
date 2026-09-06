@@ -1,18 +1,21 @@
-"""One-shot pipeline runner for Cloud Run Jobs.
+"""One-shot pipeline runner (OpenClaw "run my health pipeline", POST /run, Cloud Run).
 
 Runs the full daily health pipeline in sequence:
-  1. Oura Ring data sync (with retries)
+  1. Wearable sync — Fitbit Air (+ Pebble via Health Connect) and a sweep for
+     sporadic Oura ring nights, with retries
   2. Google Drive health folder scan (if configured)
-  3. AI Daily Advisor generation (Gemini 3 Flash)
-  4. Email delivery
+  3. AI Daily Advisor generation (Gemini)
+  4. Email + WhatsApp delivery
 
-Designed to be triggered by Cloud Scheduler → Cloud Run Job.
+Mirrors the launchd service's 07:38 → 08:00 job chain so an on-demand run
+advises on the same data the scheduled one would. Until 2026-09-06 this path
+synced only the Oura ring — the Fitbit Air, the daily device since 2026-08,
+was never refreshed by a manual run.
 Exit code 0 on success, 1 on critical failure (email never sent).
 """
 from __future__ import annotations
 
 import sys
-import time
 from datetime import datetime
 
 
@@ -25,48 +28,20 @@ def main() -> int:
     print(f"Timezone: {config.timezone}")
     print()
 
-    # ── Step 1: Oura Ring sync ──────────────────────────────────────
-    print("[1/4] Oura Ring data sync...")
-    oura_ok = False
-    if not config.oura_access_token:
-        print("  SKIP: OURA_ACCESS_TOKEN not set.")
-    else:
-        from .pipeline import load_oura_daily
-        from .storage import init_db, save_daily_payload_db, write_daily_json
+    # ── Step 1: Wearable sync ───────────────────────────────────────
+    # Same jobs the service runs at 07:38 / 07:40. Both are self-contained:
+    # they retry, back-fill the last 3 days, and print their own outcome.
+    print("[1/4] Wearable sync (Fitbit Air + Pebble, Oura ring sweep)...")
+    from .scheduler import run_fitbit_sync, run_oura_weekly_sweep
 
-        if config.database_url:
-            init_db(config)
-
-        for attempt in range(3):
-            try:
-                payload = load_oura_daily(config, day)
-                if config.database_url:
-                    save_daily_payload_db(config, payload)
-                    print("  OK: saved to Postgres.")
-                else:
-                    target = write_daily_json(config.data_dir, day.isoformat(), payload)
-                    print(f"  OK: saved {target}")
-                oura_ok = True
-                break
-            except Exception as exc:
-                wait = 2 ** attempt
-                print(f"  Attempt {attempt + 1}/3 failed: {exc}")
-                if attempt < 2:
-                    time.sleep(wait)
-
-        if not oura_ok:
-            print("  WARN: Oura sync failed after 3 attempts. Continuing without Oura data.")
-
-        # Upload Oura analytics to Drive
-        if oura_ok and config.gdrive_credentials_dir:
-            try:
-                from .oura_analytics import _build_analytics, upload_analytics_to_drive
-
-                analytics = _build_analytics(day, payload)
-                upload_analytics_to_drive(config, analytics)
-                print(f"  OK: uploaded Oura data to Drive: me/health/{day.strftime('%Y/%m/%d')}/")
-            except Exception as exc:
-                print(f"  WARN: Drive upload failed: {exc}")
+    try:
+        run_fitbit_sync()
+    except Exception as exc:
+        print(f"  WARN: Fitbit Air sync failed: {exc}. Continuing with stored data.")
+    try:
+        run_oura_weekly_sweep()
+    except Exception as exc:
+        print(f"  WARN: Oura ring sweep failed: {exc}")
 
     print()
 
@@ -91,7 +66,7 @@ def main() -> int:
     print()
 
     # ── Step 3: AI Daily Advisor ────────────────────────────────────
-    print("[3/4] AI Daily Advisor (Gemini 3 Flash)...")
+    print("[3/4] AI Daily Advisor...")
     advice = None
     stale_banner = None
     from .daily_advisor import (
@@ -126,14 +101,48 @@ def main() -> int:
                 "Generating full advice with a sync banner."
             )
 
+        # Origin-based watch check (same as the scheduled path): phone-sensor
+        # steps keep the freshness check above green while the watches
+        # themselves are silent. Say so in the digest instead of implying
+        # sleep / HRV are low.
+        silence: dict = {}
+        device_txt = ""
+        try:
+            from .pipeline import describe_device_silence, watch_silence
+
+            silence = watch_silence(config, day)
+            device_txt = describe_device_silence(silence)
+        except Exception as exc:
+            print(f"  NOTE: watch-silence check skipped: {exc}")
+        silent_days = int(silence.get("silent_days") or 0)
+        if (silent_days >= 3 or device_txt) and not stale_banner:
+            last = silence.get("last_watch_date")
+            last_txt = f"last watch data {last}" if last else "no watch data on record"
+            headline = device_txt or f"{silent_days} days without watch data"
+            stale_banner = (
+                f"### ⚠️ Watch not syncing — {headline} ({last_txt})\n\n"
+                "Steps below are the phone's own sensor; sleep, HRV, resting HR and "
+                "SpO2 are missing, not low. Fitbit Air: link the Google Health cloud "
+                f"once from your phone at {config.server_url}/auth/google-health "
+                "(or `.venv/bin/python -m scripts.google_health_api_auth` on the Mac), "
+                "or fix the phone's Google Fit ↔ Health Connect sync. Pebble: Pebble "
+                "app → Settings → Health → *Sync to Health Connect*."
+            )
+            print(f"  NOTE: {headline} ({last_txt}). Generating full advice with a banner.")
+
         try:
             if advice is None:
                 advice = generate_daily_advice(config, day)
             if stale_banner:
                 advice["advice"] = stale_banner + "\n\n" + advice.get("advice", "")
-                advice.setdefault("context_summary", {})["fitbit_stale_days"] = (
-                    freshness["stale_days"]
-                )
+                summary = advice.setdefault("context_summary", {})
+                if not freshness["fresh"] and freshness["stale_days"] >= 3:
+                    summary["fitbit_stale_days"] = freshness["stale_days"]
+                if silent_days >= 3:
+                    summary["watch_silent_days"] = silent_days
+                    summary["watch_last_date"] = silence.get("last_watch_date")
+                if device_txt:
+                    summary["watch_devices"] = device_txt
             ctx = advice.get("context_summary", {})
             print(f"  OK: generated ({len(advice['advice'])} chars)")
             print(f"    Fitbit Air data: {'Yes' if ctx.get('fitbit_available') else 'No'}")
@@ -167,6 +176,7 @@ def main() -> int:
                     "Please check logs for details."
                 ),
                 "context_summary": {
+                    "fitbit_available": False,
                     "oura_available": False,
                     "lab_reports_count": 0,
                     "lab_report_types": [],
@@ -180,7 +190,7 @@ def main() -> int:
     # ── Step 4: Email delivery ──────────────────────────────────────
     print("[4/4] Email delivery...")
     if not advice:
-        print("  SKIP: No advice to send (GOOGLE_API_KEY missing).")
+        print("  SKIP: No advice to send (advisor API key missing).")
         return 1
 
     if not config.email_to or not config.smtp_host:

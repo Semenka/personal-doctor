@@ -1,9 +1,11 @@
 {
   "name": "personal-doctor",
-  "version": "1.0.0",
-  "description": "AI health advisor — Oura Ring + Google Drive + Claude Opus 4.6 daily health plans",
+  "version": "1.1.0",
+  "description": "Health OS advisor \u2014 Fitbit Air + Pebble + sporadic Oura ring, Google Drive reports, Gemini daily plan by email + WhatsApp",
   "author": "Semenka",
   "license": "MIT",
-  "skills": ["personal-doctor"],
+  "skills": [
+    "personal-doctor"
+  ],
   "homepage": "https://github.com/Semenka/personal-doctor"
 }

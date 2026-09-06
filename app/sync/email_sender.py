@@ -507,7 +507,15 @@ def send_advice_email(config: SyncConfig, advice: Dict[str, Any]) -> None:
 </html>"""
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"Daily Health Plan \u2014 {day}"
+    # The weekly retro and the fallback error report reuse this sender; a
+    # "Daily Health Plan" subject on them made the inbox look like the daily
+    # digest went out twice (2026-08-30).
+    subject_by_type = {
+        "weekly_retrospective": "Weekly Retrospective",
+        "health_os_brief": "Health OS brief",
+    }
+    kind = subject_by_type.get(str(advice.get("report_type") or ""), "Daily Health Plan")
+    msg["Subject"] = f"{kind} \u2014 {day}"
     msg["From"] = config.smtp_user or f"health-advisor@{config.smtp_host}"
     msg["To"] = config.email_to
 

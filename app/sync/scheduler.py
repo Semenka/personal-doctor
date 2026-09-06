@@ -47,7 +47,13 @@ def start_scheduler() -> None:
     # 08:00 — AI daily advisor (Gemini 3.1 Flash Lite): analyse Oura + reports → email
     scheduler.add_job(run_daily_advisor, "cron", hour=8, minute=0,
                       id="advisor_daily", misfire_grace_time=3600)
-    # 07:41 — Anomaly detector runs right after Oura sync (X1)
+    # 07:42 — auto-credit today's actions from Fitbit Air signals
+    scheduler.add_job(run_auto_credit_job, "cron", hour=7, minute=42,
+                      id="auto_credit_daily", misfire_grace_time=3600)
+    # 08:05 — check-up reconcile + overdue alert
+    scheduler.add_job(run_overdue_checkup_alert, "cron", hour=8, minute=5,
+                      id="overdue_checkups", misfire_grace_time=3600)
+    # 07:41 — Anomaly detector runs right after the wearable sync (X1)
     scheduler.add_job(run_anomaly_detector_job, "cron", hour=7, minute=41,
                       id="anomaly_daily", misfire_grace_time=3600)
     # 07:45 — Supplement inventory decrement + low-stock alert (X2)
@@ -72,6 +78,7 @@ def start_scheduler() -> None:
         "Scheduler started:\n"
         "  07:20  Research sync (PubMed + OpenAlex)\n"
         "  07:30  Google Drive health folder scan\n"
+        "  07:38  Oura ring sweep (sporadic nights, last 7 days)\n"
         "  07:40  Fitbit Air data sync\n"
         "  07:41  Anomaly detector\n"
         "  07:45  Supplement inventory check\n"
@@ -82,6 +89,16 @@ def start_scheduler() -> None:
         "  Sun 18:15  Journal watch (weekly literature review)\n"
         "  Sun 18:30  Health OS brief → email + WhatsApp"
     )
+
+    # Keep the standalone runner alive. This loop used to sit inside
+    # run_health_os_brief_job (a paste slip on 2026-04-27): every Sunday the
+    # brief job sent its email and then slept forever, pinning one of the
+    # scheduler's 10 worker threads until the next service restart.
+    try:
+        while True:
+            time.sleep(60)
+    except KeyboardInterrupt:
+        scheduler.shutdown()
 
 
 def run_anomaly_detector_job() -> None:
@@ -147,15 +164,6 @@ def run_health_os_brief_job() -> None:
     except Exception as exc:
         print(f"Health OS brief failed (non-fatal): {exc}")
 
-    try:
-        while True:
-            time.sleep(60)
-    except KeyboardInterrupt:
-        scheduler.shutdown()
-
-
-if __name__ == "__main__":
-    start_scheduler()
 
 
 def run_oura_weekly_sweep() -> None:
@@ -316,7 +324,9 @@ def _alert_fitbit_auth_failure(config, detail: str) -> None:
         "   console.cloud.google.com/auth/audience → 'PUBLISH APP' "
         "(Testing → Production).\n"
         "2) Re-authorize once (on the Mac Mini):\n"
-        "   cd ~/personal-doctor && .venv/bin/python -m scripts.google_health_auth\n\n"
+        "   cd ~/personal-doctor && .venv/bin/python -m scripts.google_health_api_auth"
+        "   (Fitbit Air + Pebble cloud)\n"
+        "   or .venv/bin/python -m scripts.google_health_auth (phone relay)\n\n"
         "After step 1 you won't need to repeat step 2."
     )
     try:
@@ -394,10 +404,10 @@ def run_fitbit_sync() -> None:
 
     if not loaders:
         print(
-            "Skipping Fitbit sync: not authorized. Run "
+            "Skipping Fitbit sync: not authorized. Link the cloud from your phone at "
+            f"{config.server_url}/auth/google-health, or run "
             ".venv/bin/python -m scripts.google_health_api_auth (Fitbit Air + Pebble "
-            "cloud, preferred) or .venv/bin/python -m scripts.google_health_auth "
-            "(phone relay)."
+            "cloud, preferred) / scripts.google_health_auth (phone relay) on the Mac."
         )
         return
 
@@ -636,8 +646,9 @@ def run_daily_advisor() -> None:
             "2026-06-13, sleep 2026-08-04), so the break is on the phone's Google "
             "Fit ↔ Health Connect link: Google Fit → Profile → Settings → Health "
             "Connect → re-enable sync and *read* for sleep/heart/SpO2; then Fitbit "
-            "app → Health Connect → *write* on. Or link the Google Health cloud once "
-            "(`.venv/bin/python -m scripts.google_health_api_auth`) to bypass the phone. "
+            "app → Health Connect → *write* on. Or link the Google Health cloud once to "
+            f"bypass the phone — from your phone: {config.server_url}/auth/google-health "
+            "(or `.venv/bin/python -m scripts.google_health_api_auth` on the Mac). "
             "Pebble: Pebble app → Settings → Health → *Sync to Health Connect*."
         )
 
@@ -735,7 +746,7 @@ def run_auto_credit_job() -> None:
 
 def run_overdue_checkup_alert() -> None:
     """08:05 — alert on overdue + imminent lab checkups (clears silent overdue items)."""
-    from datetime import datetime
+    from datetime import date, datetime
 
     config = load_config()
     today = datetime.now(tz=config.timezone).date()
@@ -838,3 +849,7 @@ def run_whatsapp_evening_nudge() -> None:
         send_whatsapp_evening_nudge(config, day.isoformat(), actions)
     except Exception as exc:
         print(f"Evening nudge failed (non-fatal): {exc}")
+
+
+if __name__ == "__main__":
+    start_scheduler()

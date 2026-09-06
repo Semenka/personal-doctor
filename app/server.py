@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Optional
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse, JSONResponse
 
 # Configure logging to both stdout and file
@@ -48,7 +48,7 @@ def create_app() -> FastAPI:
     # ── Health check ──
     @dashboard_app.get("/health")
     async def health():
-        return JSONResponse({
+        body = {
             "status": "ok",
             "timestamp": datetime.now(tz=config.timezone).isoformat(),
             "timezone": str(config.timezone),
@@ -59,7 +59,46 @@ def create_app() -> FastAPI:
                 "smtp": bool(config.smtp_host and config.smtp_password),
                 "gdrive": bool(config.gdrive_credentials_dir),
             },
-        })
+        }
+        # Is wearable data actually arriving? "services" only says which
+        # credentials exist; this says which watches reported and when, so
+        # "check my health status" (OpenClaw) answers the real question.
+        try:
+            body["wearables"] = wearable_status(config)
+        except Exception as exc:
+            body["wearables"] = {"error": str(exc)}
+        return JSONResponse(body)
+
+    # ── Link the Google Health API (Fitbit Air + Pebble cloud) from a phone ──
+    @dashboard_app.get("/auth/google-health", response_class=HTMLResponse)
+    async def google_health_link_page():
+        from app.sync import google_health_link as link
+
+        try:
+            url = link.build_consent_url(config)
+            return HTMLResponse(link.render_page(config, consent_url=url))
+        except Exception as exc:
+            return HTMLResponse(link.render_page(config, error=str(exc)))
+
+    @dashboard_app.post("/auth/google-health", response_class=HTMLResponse)
+    async def google_health_link_submit(redirect: str = Form("")):
+        from app.sync import google_health_link as link
+
+        try:
+            tok = link.exchange(config, redirect)
+            logger.info(f"Google Health API linked from the web page: {tok}")
+        except Exception as exc:
+            logger.warning(f"Google Health API link failed: {exc}")
+            try:
+                url = link.build_consent_url(config)
+            except Exception:
+                url = None
+            return HTMLResponse(link.render_page(config, consent_url=url, error=str(exc)))
+        try:
+            result = link.verify(config)
+        except Exception as exc:
+            result = {"errors": [f"verification pull failed: {exc}"], "origins": []}
+        return HTMLResponse(link.render_page(config, result=result))
 
     # ── On-demand pipeline trigger ──
     @dashboard_app.post("/run")
@@ -228,6 +267,61 @@ def create_app() -> FastAPI:
     return dashboard_app
 
 
+def wearable_status(config, today=None) -> dict:
+    """Which transports are authorized and which watches reported, by day.
+
+    Reads only on-disk state (token files, fitbit_<date>.json) — no API call —
+    so it is safe to hit from a health probe. ``today`` is injectable for tests.
+    """
+    from app.sync.connectors import fitbit as fb
+    from app.sync.connectors import google_health as gh
+    from app.sync.connectors import google_health_api as gha
+    from app.sync.pipeline import (
+        describe_device_silence,
+        fitbit_data_is_fresh,
+        watch_silence,
+    )
+    from app.sync.storage import load_wearable_payload_file
+
+    if today is None:
+        today = datetime.now(tz=config.timezone).date()
+    transports = {}
+    for name, mod in (("google_health_api", gha), ("google_health_relay", gh)):
+        try:
+            transports[name] = bool(mod.has_credentials(config))
+        except Exception:
+            transports[name] = False
+    try:
+        transports["fitbit_web_api"] = bool(fb.has_credentials(config))
+    except Exception:
+        transports["fitbit_web_api"] = False
+
+    today_iso = today.isoformat()
+    try:
+        payload = load_wearable_payload_file(config.data_dir, today_iso, source="fitbit")
+    except FileNotFoundError:
+        payload = None
+    silence = watch_silence(config, today)
+    devices = {
+        key: {"silent_days": dev["silent_days"], "last_date": dev["last_date"]}
+        for key, dev in (silence.get("devices") or {}).items()
+    }
+    return {
+        "transports_authorized": transports,
+        "today_file": None if payload is None else {
+            "via": payload.get("via"),
+            "steps": payload.get("steps") or 0,
+            "sleep_hours": payload.get("sleep_hours") or 0,
+            "fresh": fitbit_data_is_fresh(payload),
+        },
+        "watch_silent_days": silence.get("silent_days"),
+        "last_watch_date": silence.get("last_watch_date"),
+        "phone_only": bool(silence.get("phone_only")),
+        "devices": devices,
+        "summary": describe_device_silence(silence) or "all watches reporting",
+    }
+
+
 def start_server():
     """Start the combined web server + background scheduler."""
     from apscheduler.schedulers.background import BackgroundScheduler
@@ -360,6 +454,19 @@ def start_server():
                 logger.info("Self-check: Fitbit Air and Pebble both reporting.")
         except Exception as exc:
             logger.warning(f"Self-check: Fitbit Air probe errored: {exc}")
+        # 3. Cloud not linked → send the phone link page (once a day) so the
+        #    fix is one tap away instead of a Mac Mini terminal session.
+        try:
+            from app.sync import google_health_link as link
+
+            if not link.is_linked(config):
+                sent = link.nudge_if_unlinked(config)
+                logger.warning(
+                    f"⚠️ Self-check: Google Health API not linked — link page "
+                    f"{config.server_url}/auth/google-health (WhatsApp nudge sent={sent})."
+                )
+        except Exception as exc:
+            logger.warning(f"Self-check: link nudge errored: {exc}")
 
     import threading
     threading.Thread(target=_self_check, daemon=True).start()
