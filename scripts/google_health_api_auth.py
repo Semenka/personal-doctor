@@ -16,11 +16,14 @@ Before running, once, in the Cloud Console for this project:
 Two ways to consent:
   Local (a browser on this Mac):
       .venv/bin/python -m scripts.google_health_api_auth
-  Manual (you are away from the Mac): prints a URL to open on any device;
-  after "Allow", Google lands you on google.com with ?code=... in the address
-  bar. Run the script again with that full URL:
+  Manual (you are away from the Mac): prints a URL to open on any device.
+  After "Allow", Google redirects to http://localhost:8770/?code=... — on a
+  phone that page cannot load, but the address bar still holds the code.
+  Copy the whole URL and finish with:
       .venv/bin/python -m scripts.google_health_api_auth --manual
-      .venv/bin/python -m scripts.google_health_api_auth --manual --redirect "https://www.google.com/?code=...&scope=..."
+      .venv/bin/python -m scripts.google_health_api_auth --manual --redirect "http://localhost:8770/?code=...&scope=..."
+  (--via-google switches the redirect to https://www.google.com, which then
+  must be registered on the OAuth client.)
 """
 from __future__ import annotations
 
@@ -77,6 +80,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--manual", action="store_true", help="print URL; redirect to google.com")
     ap.add_argument("--redirect", help="full redirect URL (or bare code) after --manual consent")
+    ap.add_argument("--via-google", action="store_true", help="--manual with https://www.google.com as redirect")
     args = ap.parse_args()
 
     config = load_config()
@@ -85,10 +89,11 @@ def main() -> int:
         return 1
 
     if args.manual:
-        flow = _flow(config, MANUAL_REDIRECT)
+        flow = _flow(config, MANUAL_REDIRECT if args.via_google else LOCAL_REDIRECT)
         if not args.redirect:
             url, _ = flow.authorization_url(access_type="offline", prompt="consent")
-            print("Open this URL on any device, sign in, click Allow, then copy the final URL:")
+            print("Open this URL on any device, sign in, click Allow, then copy the final URL "
+                  "from the address bar (the localhost page will not load on a phone — that is fine):")
             print("AUTH_URL_BEGIN")
             print(url)
             print("AUTH_URL_END")

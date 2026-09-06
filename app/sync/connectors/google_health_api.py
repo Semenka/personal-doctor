@@ -83,7 +83,7 @@ def _raise_for(resp: requests.Response, what: str) -> None:
         return
     body = resp.text[:600]
     hint = ""
-    if resp.status_code == 403 and "has not been used" in body or "is disabled" in body:
+    if resp.status_code == 403 and ("has not been used" in body or "is disabled" in body):
         hint = " — enable 'Google Health API' on the Cloud project"
     raise ApiError(f"{what}: HTTP {resp.status_code}{hint}: {body}")
 

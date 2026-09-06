@@ -120,7 +120,7 @@ def test_whatsapp_digest_carries_watch_silent_line(monkeypatch, tmp_path):
     lines = sent["msg"].splitlines()
     assert lines[0].startswith("🩺 Daily Plan — 2026-09-06")
     assert lines[1].startswith("⚠️ Fitbit Air silent 33d · Pebble never (phone steps only")
-    assert "fitbit_auth" in lines[1] and "Sync to Health Connect" in lines[1]
+    assert "google_health_api_auth" in lines[1] and "Sync to Health Connect" in lines[1]
 
 
 def test_whatsapp_digest_has_no_watch_line_when_watch_reports(monkeypatch, tmp_path):

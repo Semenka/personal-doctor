@@ -448,7 +448,7 @@ def send_whatsapp_advice(config: SyncConfig, advice: Dict[str, Any]) -> bool:
         what = devices or f"Watch silent {silent_days}d"
         fixes = []
         if "Fitbit" in what:
-            fixes.append("Fitbit: Health Connect sync on phone or run fitbit_auth")
+            fixes.append("Fitbit: run google_health_api_auth (cloud) or fix Health Connect sync")
         if "Pebble" in what:
             fixes.append("Pebble app → Settings → Health → Sync to Health Connect")
         line = f"⚠️ {what} (phone steps only, no sleep/HRV)"

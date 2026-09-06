@@ -353,7 +353,7 @@ def start_server():
             if device_txt:
                 logger.warning(
                     f"⚠️ Self-check: {device_txt} — steps are phone-sensor only; "
-                    "Fitbit: scripts.fitbit_auth or Google Fit ↔ Health Connect sync; "
+                    "Fitbit: scripts.google_health_api_auth (cloud) or Google Fit ↔ Health Connect sync; "
                     "Pebble: app → Settings → Health → Sync to Health Connect."
                 )
             else:

@@ -636,8 +636,8 @@ def run_daily_advisor() -> None:
             "2026-06-13, sleep 2026-08-04), so the break is on the phone's Google "
             "Fit ↔ Health Connect link: Google Fit → Profile → Settings → Health "
             "Connect → re-enable sync and *read* for sleep/heart/SpO2; then Fitbit "
-            "app → Health Connect → *write* on. Or link the Fitbit cloud once "
-            "(`.venv/bin/python -m scripts.fitbit_auth`) to bypass the phone. "
+            "app → Health Connect → *write* on. Or link the Google Health cloud once "
+            "(`.venv/bin/python -m scripts.google_health_api_auth`) to bypass the phone. "
             "Pebble: Pebble app → Settings → Health → *Sync to Health Connect*."
         )
 
