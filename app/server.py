@@ -273,6 +273,11 @@ def start_server():
                       id="evening_nudge", misfire_grace_time=3600)
     # Sun 17:50 — capture sporadic Oura data (ring no longer daily-worn)
     # before the retro/brief read the week's files.
+    # 07:38 — daily ring sweep: a sporadic Oura night reaches the same
+    # morning's advisor. (Added 2026-09-05 in scheduler.py by mistake — the
+    # service builds its jobs here, so it never fired; fixed 2026-09-06.)
+    scheduler.add_job(run_oura_weekly_sweep, "cron", hour=7, minute=38,
+                      id="oura_daily_sweep", misfire_grace_time=600)
     scheduler.add_job(run_oura_weekly_sweep, "cron", day_of_week="sun", hour=17, minute=50,
                       id="oura_weekly_sweep", misfire_grace_time=7200)
     scheduler.add_job(run_weekly_retro_job, "cron", day_of_week="sun", hour=18, minute=0,

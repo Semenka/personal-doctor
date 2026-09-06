@@ -37,9 +37,9 @@ def start_scheduler() -> None:
     scheduler.add_job(run_gdrive_sync, "cron", hour=7, minute=30,
                       id="gdrive_daily", misfire_grace_time=3600)
     # 07:40 — Fitbit Air data sync (sole wearable source)
-    # Ring sweep daily too (was Sunday-only): a sporadic ring night now reaches
-    # the same morning's advisor instead of waiting up to six days. Cheap —
-    # seven Oura reads, skips days already stored fresh, silent when unworn.
+    # NOTE: the live service registers its jobs in app/server.py, not here —
+    # this function is only used by the standalone runner. Keep both lists in
+    # step when adding a job.
     scheduler.add_job(run_oura_weekly_sweep, "cron", hour=7, minute=38,
                       id="oura_daily_sweep", misfire_grace_time=600)
     scheduler.add_job(run_fitbit_sync, "cron", hour=7, minute=40,
