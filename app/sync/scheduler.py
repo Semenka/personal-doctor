@@ -668,12 +668,12 @@ def run_daily_advisor() -> None:
                         f"## Daily Health Plan — {day.isoformat()}\n\n"
                         f"**Advisor generation failed.**\n\n"
                         f"Error: {exc}\n\n"
-                        "The AI advisor could not generate today's plan. "
-                        "This may be caused by:\n"
-                        "- Google API quota exceeded\n"
-                        "- Temporary API outage\n"
-                        "- Invalid API key\n\n"
-                        "Please check the server logs for details."
+                        "Every LLM provider in the chain failed (Codex CLI, then "
+                        "the fallbacks with credentials). Usual causes:\n"
+                        "- codex CLI: expired login (`codex login`), a stale "
+                        "install on launchd's PATH, or a usage limit\n"
+                        "- Gemini / OpenAI fallback: no or revoked API key\n\n"
+                        "Check ~/personal-doctor/logs/personal-doctor.log."
                     ),
                     "context_summary": {
                         "fitbit_available": False,

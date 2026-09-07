@@ -71,14 +71,10 @@ def _default_model() -> str:
     return "gpt-5.5"
 
 
-def has_credentials() -> bool:
-    """True iff the active provider has the credentials it needs to run.
-
-    Codex relies on the on-disk auth in ``~/.codex/auth.json`` (set up via
+def _provider_has_credentials(p: str) -> bool:
+    """Codex relies on the on-disk auth in ``~/.codex/auth.json`` (set up via
     ``codex login``) — we don't see an env var for it, so we treat the
-    CLI's presence as the signal.
-    """
-    p = _provider()
+    CLI's presence as the signal."""
     if p == "codex":
         return _codex_cli_path() is not None
     if p == "gemini":
@@ -86,6 +82,48 @@ def has_credentials() -> bool:
     if p == "openai":
         return bool(os.getenv("OPENAI_API_KEY"))
     return False
+
+
+def _fallback_providers() -> list:
+    """Providers to try, in order, when the primary one fails.
+
+    ``LLM_FALLBACK`` (comma-separated) overrides the default ``gemini,openai``;
+    set it to an empty string to disable fallback. A provider without
+    credentials is skipped. Added 2026-09-07 after the 08:00 advisor died on
+    a codex CLI error and the whole digest went out as an error report.
+    """
+    raw = os.getenv("LLM_FALLBACK")
+    names = [n.strip().lower() for n in (raw if raw is not None else "gemini,openai").split(",")]
+    primary = _provider()
+    return [n for n in names if n and n != primary and n in ("codex", "gemini", "openai")]
+
+
+def provider_chain() -> list:
+    """The primary provider followed by every credentialed fallback."""
+    return [_provider()] + [p for p in _fallback_providers() if _provider_has_credentials(p)]
+
+
+def has_credentials() -> bool:
+    """True iff some provider in the chain can run (primary or a fallback)."""
+    return any(_provider_has_credentials(p) for p in provider_chain())
+
+
+def _model_for(provider: str, requested: Optional[str]) -> str:
+    """The model to use with ``provider``: the caller's choice only if it is
+    the primary provider's; a fallback gets its own default."""
+    if provider == _provider() and requested:
+        return requested
+    if provider == "gemini":
+        return os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite-preview")
+    return "gpt-5.5"
+
+
+_LAST_GENERATION: dict = {}
+
+
+def last_generation_info() -> dict:
+    """Which provider/model produced the most recent reply (for reports)."""
+    return dict(_LAST_GENERATION)
 
 
 _CODEX_PATH_CACHE: Optional[str] = None
@@ -124,11 +162,46 @@ def _codex_cli_path() -> Optional[str]:
         str(Path.home() / ".local/bin/codex"),
     ]
 
+    present = []
     for c in candidates:
-        if c and Path(c).is_file():
-            _CODEX_PATH_CACHE = c
-            return c
-    return None
+        if c and Path(c).is_file() and c not in present:
+            present.append(c)
+    if not present:
+        return None
+    # An explicit override is taken as-is. Otherwise prefer the NEWEST
+    # install: on 2026-09-07 launchd's PATH resolved to codex 0.142.5 while
+    # the user's shell ran 0.150.1; the old binary refused the new one's
+    # ~/.codex models cache ("missing field base_instructions") and the
+    # morning digest went out as an error report.
+    chosen = present[0] if os.getenv("CODEX_BIN") else _pick_newest(present)
+    _CODEX_PATH_CACHE = chosen
+    return chosen
+
+
+def _codex_version(path: str) -> tuple:
+    """Version tuple of a codex binary, () when it cannot be determined."""
+    import re
+
+    try:
+        env = dict(os.environ)
+        env["PATH"] = f"{Path(path).parent}:{Path(path).resolve().parent}:" + env.get("PATH", "")
+        out = subprocess.run(
+            [path, "--version"], capture_output=True, text=True, timeout=15, check=False, env=env,
+        )
+        m = re.search(r"(\d+)\.(\d+)\.(\d+)", (out.stdout or "") + (out.stderr or ""))
+        return tuple(int(x) for x in m.groups()) if m else ()
+    except Exception:
+        return ()
+
+
+def _pick_newest(paths: list) -> str:
+    """The candidate with the highest version; ties keep candidate order."""
+    best, best_v = paths[0], _codex_version(paths[0])
+    for c in paths[1:]:
+        v = _codex_version(c)
+        if v > best_v:
+            best, best_v = c, v
+    return best
 
 
 def _codex_exec_env() -> dict:
@@ -155,6 +228,55 @@ def _codex_exec_env() -> dict:
 # ──────────────────────────────────────────────────────────────────────────
 
 
+def _generate_with(provider: str, *, system: str, user: str, model: str,
+                   max_output_tokens: Optional[int], temperature: Optional[float],
+                   reasoning: str, timeout_s: int, image_path: Optional[Path]) -> str:
+    if provider == "codex":
+        return _generate_codex(
+            system=system, user=user, model=model,
+            reasoning=reasoning, timeout_s=timeout_s, image_path=image_path,
+        )
+    if provider == "gemini":
+        if image_path is not None:
+            return _generate_gemini_image(system=system, user=user, model=model, image_path=image_path)
+        return _generate_gemini(
+            system=system, user=user, model=model,
+            max_output_tokens=max_output_tokens, temperature=temperature,
+        )
+    if provider == "openai":
+        if image_path is not None:
+            return _generate_openai_image(system=system, user=user, model=model, image_path=image_path)
+        return _generate_openai(
+            system=system, user=user, model=model,
+            max_output_tokens=max_output_tokens, temperature=temperature,
+        )
+    raise RuntimeError(f"Unknown LLM_PROVIDER: {provider!r}")
+
+
+def _generate_chain(**kw) -> str:
+    """Try the primary provider, then each credentialed fallback.
+
+    Raises ``RuntimeError`` naming every failure only when the whole chain
+    is exhausted. Records the provider that answered in ``_LAST_GENERATION``.
+    """
+    requested = kw.pop("model")
+    errors = []
+    for provider in provider_chain():
+        model = _model_for(provider, requested)
+        try:
+            text = _generate_with(provider, model=model, **kw)
+        except Exception as exc:
+            errors.append(f"{provider}/{model}: {exc}")
+            logger.warning(f"LLM {provider} ({model}) failed: {str(exc)[:300]}")
+            continue
+        _LAST_GENERATION.clear()
+        _LAST_GENERATION.update({"provider": provider, "model": model, "fallback": bool(errors)})
+        if errors:
+            logger.warning(f"LLM answered by fallback {provider} after: " + " | ".join(errors)[:600])
+        return text
+    raise RuntimeError("all LLM providers failed — " + " | ".join(errors))
+
+
 def generate(
     *,
     system: str = "",
@@ -172,30 +294,17 @@ def generate(
     ``temperature`` are honored by Gemini / OpenAI. For Codex they're
     silently ignored — the CLI doesn't expose either as a per-call flag.
 
-    Returns the model's text reply, stripped of leading/trailing whitespace.
-    Raises ``RuntimeError`` if the provider failed.
-    """
-    mdl = model or _default_model()
-    provider = _provider()
+    When the primary provider fails, every credentialed fallback (see
+    ``LLM_FALLBACK``) is tried before giving up.
 
-    if provider == "codex":
-        return _generate_codex(
-            system=system, user=user, model=mdl,
-            reasoning=reasoning, timeout_s=timeout_s,
-        )
-    if provider == "gemini":
-        return _generate_gemini(
-            system=system, user=user, model=mdl,
-            max_output_tokens=max_output_tokens,
-            temperature=temperature,
-        )
-    if provider == "openai":
-        return _generate_openai(
-            system=system, user=user, model=mdl,
-            max_output_tokens=max_output_tokens,
-            temperature=temperature,
-        )
-    raise RuntimeError(f"Unknown LLM_PROVIDER: {provider!r}")
+    Returns the model's text reply, stripped of leading/trailing whitespace.
+    Raises ``RuntimeError`` if every provider failed.
+    """
+    return _generate_chain(
+        system=system, user=user, model=model or _default_model(),
+        max_output_tokens=max_output_tokens, temperature=temperature,
+        reasoning=reasoning, timeout_s=timeout_s, image_path=None,
+    )
 
 
 def generate_with_image(
@@ -211,26 +320,14 @@ def generate_with_image(
 
     Codex CLI supports image attachments via ``-i FILE``. Gemini routes
     through the legacy ``google.genai`` Part API. OpenAI sends a
-    base64-encoded data URL in the content array.
+    base64-encoded data URL in the content array. Same fallback chain as
+    ``generate``.
     """
-    mdl = model or _default_model()
-    provider = _provider()
-
-    if provider == "codex":
-        return _generate_codex(
-            system=system, user=user, model=mdl,
-            reasoning=reasoning, timeout_s=timeout_s,
-            image_path=image_path,
-        )
-    if provider == "gemini":
-        return _generate_gemini_image(
-            system=system, user=user, model=mdl, image_path=image_path,
-        )
-    if provider == "openai":
-        return _generate_openai_image(
-            system=system, user=user, model=mdl, image_path=image_path,
-        )
-    raise RuntimeError(f"Unknown LLM_PROVIDER: {provider!r}")
+    return _generate_chain(
+        system=system, user=user, model=model or _default_model(),
+        max_output_tokens=None, temperature=None,
+        reasoning=reasoning, timeout_s=timeout_s, image_path=image_path,
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -275,9 +372,12 @@ def _generate_codex(
             raise RuntimeError(f"codex exec timed out after {timeout_s}s")
 
         if proc.returncode != 0:
-            err = (proc.stderr or proc.stdout or "").strip()
+            # The CLI echoes the whole prompt on stdout before it fails, so
+            # the first 400 chars were always "[SYSTEM] You are an
+            # experienced…" and the actual error never reached the report.
+            # Keep the tail of stderr (the error lines), then of stdout.
             raise RuntimeError(
-                f"codex exec exit={proc.returncode}: {err[:400]}"
+                f"codex exec exit={proc.returncode}: {_error_tail(proc.stderr, proc.stdout)}"
             )
 
         try:
@@ -307,6 +407,18 @@ def _generate_codex(
             Path(out_path).unlink(missing_ok=True)
         except Exception:
             pass
+
+
+def _error_tail(stderr: Optional[str], stdout: Optional[str], limit: int = 600) -> str:
+    """The most informative slice of a failed CLI run: error-looking stderr
+    lines first, else the last ``limit`` chars of stderr, else of stdout."""
+    err = (stderr or "").strip()
+    hits = [ln for ln in err.splitlines() if "error" in ln.lower() or "fail" in ln.lower()]
+    if hits:
+        return " | ".join(hits)[-limit:]
+    if err:
+        return err[-limit:]
+    return (stdout or "").strip()[-limit:]
 
 
 def _merge_system_user(system: str, user: str) -> str:
@@ -462,4 +574,6 @@ def provider_info() -> dict:
         "provider": _provider(),
         "model": _default_model(),
         "has_credentials": has_credentials(),
+        "chain": provider_chain(),
+        "codex_bin": _codex_cli_path() if _provider() == "codex" else None,
     }
