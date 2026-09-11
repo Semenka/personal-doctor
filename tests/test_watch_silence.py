@@ -177,3 +177,28 @@ def test_description_says_never_for_a_device_with_no_history(tmp_path):
         _write(tmp_path, f"fitbit_{d}.json", _phone_day())
     s = watch_silence(cfg, date(2026, 9, 5), lookback_days=3)
     assert describe_device_silence(s) == "Fitbit Air never · Pebble never"
+
+
+def test_banner_is_device_aware(tmp_path):
+    from app.sync.pipeline import watch_banner
+
+    cfg = types.SimpleNamespace(data_dir=tmp_path, server_url="http://192.168.1.35:8000")
+    both = {"silent_days": 0, "last_watch_date": "2026-09-11", "devices": {
+        "fitbit": {"label": "Fitbit Air", "silent_days": 0, "last_date": "2026-09-11"},
+        "pebble": {"label": "Pebble", "silent_days": 0, "last_date": "2026-09-11"}}}
+    assert watch_banner(cfg, both) == ""
+
+    pebble_only_silent = {"silent_days": 0, "last_watch_date": "2026-09-11", "devices": {
+        "fitbit": {"label": "Fitbit Air", "silent_days": 0, "last_date": "2026-09-11"},
+        "pebble": {"label": "Pebble", "silent_days": 5, "last_date": "2026-09-06"}}}
+    b = watch_banner(cfg, pebble_only_silent)
+    assert b.startswith("### ⚠️ Pebble silent 5d — Fitbit Air reporting")
+    assert "missing, not low" not in b and "Pebble: open the Pebble app" in b
+    assert "google-health" not in b  # the Fitbit fix is not offered for a Pebble gap
+
+    none = {"silent_days": 33, "last_watch_date": "2026-08-04", "devices": {
+        "fitbit": {"label": "Fitbit Air", "silent_days": 33, "last_date": "2026-08-04"},
+        "pebble": {"label": "Pebble", "silent_days": 61, "last_date": None}}}
+    b = watch_banner(cfg, none)
+    assert b.startswith("### ⚠️ Watch not syncing — Fitbit Air silent 33d · Pebble never (last watch data 2026-08-04)")
+    assert "missing, not low" in b and "http://192.168.1.35:8000/auth/google-health" in b and "Pebble:" in b

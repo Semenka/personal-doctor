@@ -635,22 +635,9 @@ def run_daily_advisor() -> None:
 
     device_txt = describe_device_silence(silence)
     if (silent_days >= 3 or device_txt) and not stale_banner:
-        last = silence.get("last_watch_date")
-        last_txt = f"last watch data {last}" if last else "no watch data on record"
-        headline = device_txt or f"{silent_days} days without watch data"
-        stale_banner = (
-            f"### ⚠️ Watch not syncing — {headline} ({last_txt})\n\n"
-            "Steps below are the phone's own sensor; sleep, HRV, resting HR and "
-            "SpO2 are missing, not low. Google Fit's streams show the Health "
-            "Connect relay died for *both* the Fitbit and Oura apps (heart rate "
-            "2026-06-13, sleep 2026-08-04), so the break is on the phone's Google "
-            "Fit ↔ Health Connect link: Google Fit → Profile → Settings → Health "
-            "Connect → re-enable sync and *read* for sleep/heart/SpO2; then Fitbit "
-            "app → Health Connect → *write* on. Or link the Google Health cloud once to "
-            f"bypass the phone — from your phone: {config.server_url}/auth/google-health "
-            "(or `.venv/bin/python -m scripts.google_health_api_auth` on the Mac). "
-            "Pebble: Pebble app → Settings → Health → *Sync to Health Connect*."
-        )
+        from .pipeline import watch_banner
+
+        stale_banner = watch_banner(config, silence)
 
     try:
         advice = generate_daily_advice(config, day)

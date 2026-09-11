@@ -586,6 +586,59 @@ def describe_device_silence(silence: Dict[str, Any], min_days: int = 3) -> str:
     return " · ".join(parts)
 
 
+def watch_banner(config: SyncConfig, silence: Dict[str, Any], min_days: int = 3) -> str:
+    """Markdown banner for the daily plan when a watch is silent, or "".
+
+    Device-aware: on 2026-09-11 the banner said "Watch not syncing — Pebble
+    silent 5d … sleep, HRV, resting HR and SpO2 are missing" while the
+    Fitbit Air had delivered all of them that morning. Only when NO watch
+    reports are the recovery metrics missing; a single silent device gets
+    its own line and its own fix.
+    """
+    devices = silence.get("devices") or {}
+    silent = {k: d for k, d in devices.items() if int(d.get("silent_days") or 0) >= min_days}
+    silent_days = int(silence.get("silent_days") or 0)
+    if not silent and silent_days < min_days:
+        return ""
+    reporting = [d["label"] for k, d in devices.items() if k not in silent]
+    link = f"{config.server_url}/auth/google-health"
+    fixes = {
+        "fitbit": (
+            "Fitbit Air: link the Google Health cloud once from your phone at "
+            f"{link} (or `.venv/bin/python -m scripts.google_health_api_auth` on the "
+            "Mac), or fix the phone's Google Fit ↔ Health Connect sync."
+        ),
+        "pebble": (
+            "Pebble: open the Pebble app → Settings → Health → *Sync to Health "
+            "Connect*, then open the Google Health app once so it imports the "
+            "new Health Connect records."
+        ),
+    }
+    if reporting and silent:
+        # One watch is fine — the day's recovery metrics come from it.
+        headline = describe_device_silence(silence, min_days=min_days)
+        lines = [
+            f"### ⚠️ {headline} — {', '.join(reporting)} reporting\n",
+            "Recovery metrics below come from the reporting watch; the silent one "
+            "contributes nothing until it syncs.",
+        ]
+    else:
+        last = silence.get("last_watch_date")
+        last_txt = f"last watch data {last}" if last else "no watch data on record"
+        headline = describe_device_silence(silence, min_days=min_days) or (
+            f"{silent_days} days without watch data"
+        )
+        lines = [
+            f"### ⚠️ Watch not syncing — {headline} ({last_txt})\n",
+            "Steps below are the phone's own sensor; sleep, HRV, resting HR and SpO2 "
+            "are missing, not low.",
+        ]
+    for key in (silent or devices):
+        if key in fixes:
+            lines.append(fixes[key])
+    return "\n".join(lines)
+
+
 def oura_data_is_fresh(payload: Dict[str, Any]) -> bool:
     """Return True if the Oura payload contains real (non-zero) sleep/recovery data.
 

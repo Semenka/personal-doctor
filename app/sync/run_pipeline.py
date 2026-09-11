@@ -116,19 +116,11 @@ def main() -> int:
             print(f"  NOTE: watch-silence check skipped: {exc}")
         silent_days = int(silence.get("silent_days") or 0)
         if (silent_days >= 3 or device_txt) and not stale_banner:
-            last = silence.get("last_watch_date")
-            last_txt = f"last watch data {last}" if last else "no watch data on record"
-            headline = device_txt or f"{silent_days} days without watch data"
-            stale_banner = (
-                f"### ⚠️ Watch not syncing — {headline} ({last_txt})\n\n"
-                "Steps below are the phone's own sensor; sleep, HRV, resting HR and "
-                "SpO2 are missing, not low. Fitbit Air: link the Google Health cloud "
-                f"once from your phone at {config.server_url}/auth/google-health "
-                "(or `.venv/bin/python -m scripts.google_health_api_auth` on the Mac), "
-                "or fix the phone's Google Fit ↔ Health Connect sync. Pebble: Pebble "
-                "app → Settings → Health → *Sync to Health Connect*."
-            )
-            print(f"  NOTE: {headline} ({last_txt}). Generating full advice with a banner.")
+            from .pipeline import watch_banner
+
+            stale_banner = watch_banner(config, silence)
+            print(f"  NOTE: {device_txt or f'{silent_days}d without watch data'}. "
+                  "Generating full advice with a banner.")
 
         try:
             if advice is None:
