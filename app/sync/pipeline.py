@@ -635,3 +635,20 @@ def check_oura_freshness(
         "stale_days": stale_days,
         "last_fresh_date": last_fresh,
     }
+
+
+def partial_silence_note(silence: Dict[str, Any], min_days: int = 3) -> str:
+    """Short, TRUE note for when one watch is silent but another is reporting.
+
+    The full "Watch not syncing" banner says sleep/HRV/resting HR are
+    missing — true only when EVERY watch is silent. With the Fitbit Air
+    delivering recovery data and only the Pebble quiet (2026-09-21/22), that
+    banner told the user and the advisor that measured data was absent.
+    """
+    device_txt = describe_device_silence(silence, min_days=min_days)
+    if not device_txt or int(silence.get("silent_days") or 0) >= min_days:
+        return ""
+    note = f"ℹ️ {device_txt} — the other watch is reporting normally."
+    if "Pebble" in device_txt:
+        note += " Pebble: open the Pebble app → Settings → Health → *Sync to Health Connect*."
+    return note

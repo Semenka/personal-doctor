@@ -367,8 +367,12 @@ def _yesterday_activity_line(config: SyncConfig, day: str) -> str:
     if sleep:
         src = "ring" if not fb.get("sleep_hours") and oura.get("sleep_hours") else "watch"
         parts.append(f"sleep {sleep:.1f}h ({src})")
-    if oura.get("hrv"):
-        parts.append(f"HRV {oura['hrv']:.0f}")
+    hrv = fb.get("hrv") or oura.get("hrv") or 0
+    if hrv:
+        parts.append(f"HRV {hrv:.0f}")
+    rhr = fb.get("resting_hr") or oura.get("resting_hr") or 0
+    if rhr:
+        parts.append(f"RHR {rhr:.0f}")
     return "⌚ Yesterday: " + " · ".join(parts) if parts else ""
 
 

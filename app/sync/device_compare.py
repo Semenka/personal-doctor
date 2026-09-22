@@ -33,7 +33,12 @@ _COMPARE_METRICS = [
     ("resting_hr", "Resting HR", "bpm", False),
     ("sleep_hours", "Sleep", "h", False),
     ("deep_sleep_min", "Deep sleep", "min", False),
+    ("rem_sleep_min", "REM sleep", "min", False),
+    ("light_sleep_min", "Light sleep", "min", False),
+    ("efficiency", "Sleep efficiency", "%", False),
     ("steps", "Steps", "", False),
+    ("active_minutes", "Active minutes", "", False),
+    ("avg_hr", "Avg heart rate (24h)", "bpm", False),
     ("avg_breath", "Breathing rate", "/min", False),
     ("temp_deviation", "Skin temp dev", "°C", False),
     # Fitbit-only bracelet metrics:
@@ -264,6 +269,25 @@ def render_compare_whatsapp(config: SyncConfig, day: str) -> str:
     return "\n".join(lines)
 
 
+def _sleep_timing_line(config: SyncConfig, day: str) -> str:
+    """Actual bedtime / wake time in local time, from the watch's sleep
+    interval. Without it the advisor prescribed "lights-out by 23:35" blind to
+    when the user really fell asleep (e.g. 01:40 on 2026-09-19)."""
+    from datetime import datetime
+
+    fb = _load(config, day, "fitbit") or {}
+    start, end = fb.get("sleep_start"), fb.get("sleep_end")
+    if not (start and end):
+        return ""
+    try:
+        tz = config.timezone
+        a = datetime.fromisoformat(str(start).replace("Z", "+00:00")).astimezone(tz)
+        b = datetime.fromisoformat(str(end).replace("Z", "+00:00")).astimezone(tz)
+    except Exception:
+        return ""
+    return f"- Last night: asleep {a:%H:%M} → woke {b:%H:%M} (local time)"
+
+
 def render_compare_advisor_block(config: SyncConfig, day: str) -> str:
     """Text block for the LLM prompt so advice can note device agreement/divergence."""
     rows = compare_metrics(config, day)
@@ -286,6 +310,9 @@ def render_compare_advisor_block(config: SyncConfig, day: str) -> str:
         ]
         for r in rows:
             lines.append(f"- {r['label']}: {_fmt(r['fitbit'], r['unit'])}")
+        timing = _sleep_timing_line(config, day)
+        if timing:
+            lines.append(timing)
         return "\n".join(lines)
 
     lines = [

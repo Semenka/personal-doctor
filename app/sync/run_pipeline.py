@@ -115,7 +115,13 @@ def main() -> int:
         except Exception as exc:
             print(f"  NOTE: watch-silence check skipped: {exc}")
         silent_days = int(silence.get("silent_days") or 0)
-        if (silent_days >= 3 or device_txt) and not stale_banner:
+        # Full banner only when EVERY watch is silent; a single quiet watch
+        # (e.g. Pebble while the Fitbit Air reports) gets a short true note.
+        if not stale_banner and silent_days < 3 and device_txt:
+            from .pipeline import partial_silence_note
+
+            stale_banner = partial_silence_note(silence) or None
+        if silent_days >= 3 and not stale_banner:
             last = silence.get("last_watch_date")
             last_txt = f"last watch data {last}" if last else "no watch data on record"
             headline = device_txt or f"{silent_days} days without watch data"
