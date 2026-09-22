@@ -118,7 +118,7 @@ def main() -> int:
         if (silent_days >= 3 or device_txt) and not stale_banner:
             from .pipeline import watch_banner
 
-            stale_banner = watch_banner(config, silence)
+            stale_banner = watch_banner(config, silence) or None
             print(f"  NOTE: {device_txt or f'{silent_days}d without watch data'}. "
                   "Generating full advice with a banner.")
 

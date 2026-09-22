@@ -75,13 +75,16 @@ def test_fetch_daily_summary_maps_every_block(monkeypatch):
                 {"activityLevel": "VIGOROUS", "activeMinutesSum": "10"}]}},
             "active-zone-minutes": {"activeZoneMinutes": {"sumInFatBurnHeartZone": "20", "sumInCardioHeartZone": "8"}},
             "heart-rate": {"heartRate": {"beatsPerMinuteAvg": 71.5}},
+            # Google's de-duplicated total: the watches overlap, so it is NOT
+            # the 6000 + 1500 sum of the raw points.
+            "steps": {"steps": {"countSum": "6400"}},
         }.get(data_type, {})
 
     monkeypatch.setattr(api, "_session", lambda cfg: object())
     monkeypatch.setattr(api, "_list", fake_list)
     monkeypatch.setattr(api, "_daily_rollup", fake_rollup)
     s = api.fetch_daily_summary(types.SimpleNamespace(), day)
-    assert s["steps"] == 7500 and s["active_minutes"] == 35 and s["active_zone_minutes"] == 28
+    assert s["steps"] == 6400 and s["active_minutes"] == 35 and s["active_zone_minutes"] == 28
     assert s["sleep_minutes"] == 402 and s["deep_min"] == 70 and s["rem_min"] == 95
     assert s["resting_hr"] == 57 and s["hrv"] == 31.4 and s["spo2"] == 96.2 and s["breathing_rate"] == 14.6
     assert s["avg_hr"] == 71.5 and s["errors"] == []
@@ -142,3 +145,22 @@ def test_scheduler_prefers_google_health_api_and_folds_the_rest(monkeypatch):
     assert payload["steps"] == 8000 and payload["hrv"] == 31.4 and payload["active_zone_minutes"] == 31
     assert payload["via"] == "google_health_api+google_health"
     assert len(payload["data_origins"]) == 2
+
+
+def test_steps_never_sum_overlapping_sources(monkeypatch):
+    """Air + phone + Health Connect copy record the same walk; summing raw
+    points triple-counted (2026-09-21: 33,292 vs reconciled 12,234). Without a
+    rollup, fall back to the single largest source — never a cross-source sum."""
+    day = date(2026, 9, 21)
+
+    def fake_list(sess, data_type, filter_expr, page_size=1000, max_pages=10):
+        if data_type == "steps":
+            return [_fitbit_point("steps", {"count": "12234"}),
+                    _pebble_point("steps", {"count": "10595"})]
+        return []
+
+    monkeypatch.setattr(api, "_session", lambda cfg: object())
+    monkeypatch.setattr(api, "_list", fake_list)
+    monkeypatch.setattr(api, "_daily_rollup", lambda sess, t, d: {})
+    s = api.fetch_daily_summary(types.SimpleNamespace(), day)
+    assert s["steps"] == 12234

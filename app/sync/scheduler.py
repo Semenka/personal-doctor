@@ -637,7 +637,7 @@ def run_daily_advisor() -> None:
     if (silent_days >= 3 or device_txt) and not stale_banner:
         from .pipeline import watch_banner
 
-        stale_banner = watch_banner(config, silence)
+        stale_banner = watch_banner(config, silence) or None
 
     try:
         advice = generate_daily_advice(config, day)

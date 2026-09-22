@@ -615,13 +615,12 @@ def watch_banner(config: SyncConfig, silence: Dict[str, Any], min_days: int = 3)
         ),
     }
     if reporting and silent:
-        # One watch is fine — the day's recovery metrics come from it.
-        headline = describe_device_silence(silence, min_days=min_days)
-        lines = [
-            f"### ⚠️ {headline} — {', '.join(reporting)} reporting\n",
-            "Recovery metrics below come from the reporting watch; the silent one "
-            "contributes nothing until it syncs.",
-        ]
+        # One watch is fine — the day's recovery metrics come from it. Keep it
+        # to the short, true note; the Pebble fix is part of that note.
+        note = partial_silence_note(silence, min_days=min_days)
+        if "fitbit" in silent:
+            note += " " + fixes["fitbit"]
+        return note
     else:
         last = silence.get("last_watch_date")
         last_txt = f"last watch data {last}" if last else "no watch data on record"
@@ -688,3 +687,20 @@ def check_oura_freshness(
         "stale_days": stale_days,
         "last_fresh_date": last_fresh,
     }
+
+
+def partial_silence_note(silence: Dict[str, Any], min_days: int = 3) -> str:
+    """Short, TRUE note for when one watch is silent but another is reporting.
+
+    The full "Watch not syncing" banner says sleep/HRV/resting HR are
+    missing — true only when EVERY watch is silent. With the Fitbit Air
+    delivering recovery data and only the Pebble quiet (2026-09-21/22), that
+    banner told the user and the advisor that measured data was absent.
+    """
+    device_txt = describe_device_silence(silence, min_days=min_days)
+    if not device_txt or int(silence.get("silent_days") or 0) >= min_days:
+        return ""
+    note = f"ℹ️ {device_txt} — the other watch is reporting normally."
+    if "Pebble" in device_txt:
+        note += " Pebble: open the Pebble app → Settings → Health → *Sync to Health Connect*."
+    return note

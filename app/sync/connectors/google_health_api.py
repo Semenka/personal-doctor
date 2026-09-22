@@ -187,15 +187,23 @@ def fetch_daily_summary(config: SyncConfig, day: date) -> Dict[str, Any]:
             logger.info(f"google_health_api {msg[:200]}")
 
     def steps():
+        # The same walk is recorded by several sources at once — the Fitbit
+        # Air, the phone's step counter, and Health Connect's copy of that
+        # phone data. Summing raw points triple-counted (2026-09-21: points
+        # summed to 33,292 vs Google's reconciled 12,234). The daily rollup
+        # is Google's de-duplicated total, so it is authoritative; raw points
+        # are read only for provenance, and as a fallback the single largest
+        # source is used (never a sum across sources).
         pts = _list(sess, "steps", _day_filter("steps.interval.civil_start_time", day))
-        total = 0
+        per_origin: Dict[str, int] = {}
         for p in pts:
-            total += int(_num((p.get("steps") or {}).get("count")))
             o = origin_of(p)
+            per_origin[o] = per_origin.get(o, 0) + int(_num((p.get("steps") or {}).get("count")))
             if o:
                 origins.add(o)
-        if not total:  # rollup as the fallback (reconciled across sources)
-            total = int(_num((_daily_rollup(sess, "steps", day).get("steps") or {}).get("countSum")))
+        total = int(_num((_daily_rollup(sess, "steps", day).get("steps") or {}).get("countSum")))
+        if not total and per_origin:
+            total = max(per_origin.values())
         out["steps"] = total
 
     def active_minutes():
