@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time as _time
 import shutil
 import subprocess
 import tempfile
@@ -253,6 +254,19 @@ def _generate_with(provider: str, *, system: str, user: str, model: str,
     raise RuntimeError(f"Unknown LLM_PROVIDER: {provider!r}")
 
 
+_TRANSIENT_RETRIES = 3
+_TRANSIENT_BACKOFF_S = 5
+_TRANSIENT_SIGNATURES = ("503", "unavailable", "high demand", "overloaded", "500 internal", "deadline exceeded")
+
+
+def _is_transient(message: str) -> bool:
+    """Server-side blips worth retrying on the SAME provider (not quota/auth)."""
+    m = (message or "").lower()
+    if "usage limit" in m or "quota" in m:
+        return False
+    return any(sig in m for sig in _TRANSIENT_SIGNATURES)
+
+
 def _generate_chain(**kw) -> str:
     """Try the primary provider, then each credentialed fallback.
 
@@ -263,11 +277,23 @@ def _generate_chain(**kw) -> str:
     errors = []
     for provider in provider_chain():
         model = _model_for(provider, requested)
-        try:
-            text = _generate_with(provider, model=model, **kw)
-        except Exception as exc:
-            errors.append(f"{provider}/{model}: {exc}")
-            logger.warning(f"LLM {provider} ({model}) failed: {str(exc)[:300]}")
+        text = None
+        for attempt in range(_TRANSIENT_RETRIES + 1):
+            try:
+                text = _generate_with(provider, model=model, **kw)
+                break
+            except Exception as exc:
+                transient = _is_transient(str(exc))
+                if transient and attempt < _TRANSIENT_RETRIES:
+                    # "503 UNAVAILABLE — high demand" clears in seconds; on
+                    # 2026-09-25 it was the only thing between the Codex
+                    # quota failure and a delivered plan.
+                    _time.sleep(_TRANSIENT_BACKOFF_S * (attempt + 1))
+                    continue
+                errors.append(f"{provider}/{model}: {exc}")
+                logger.warning(f"LLM {provider} ({model}) failed: {str(exc)[:300]}")
+                break
+        if text is None:
             continue
         _LAST_GENERATION.clear()
         _LAST_GENERATION.update({"provider": provider, "model": model, "fallback": bool(errors)})

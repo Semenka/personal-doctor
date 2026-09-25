@@ -1,6 +1,7 @@
 """Send daily health advice via email (SMTP)."""
 from __future__ import annotations
 
+import logging
 import re
 import smtplib
 import ssl
@@ -456,8 +457,13 @@ def send_advice_email(config: SyncConfig, advice: Dict[str, Any]) -> None:
     except Exception:
         outcomes_html = ""
 
-    # Build execution dashboard (7-day history + effects)
-    execution_dashboard_html = _build_execution_dashboard_html(config, day)
+    # Build execution dashboard (7-day history + effects). Guarded like every
+    # other optional block: a dashboard error must never cost the whole email.
+    try:
+        execution_dashboard_html = _build_execution_dashboard_html(config, day)
+    except Exception as exc:
+        logging.getLogger("personal-doctor.email").warning(f"execution dashboard skipped: {exc}")
+        execution_dashboard_html = ""
 
     # Recent papers (PubMed + OpenAlex) — green/red impact-coded block
     research_html = ""

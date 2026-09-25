@@ -109,3 +109,33 @@ def test_codex_exec_error_carries_stderr_tail(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError) as exc:
         llm._generate_codex(system="s", user="u", model="gpt-5.5", reasoning="low", timeout_s=30)
     assert "usage limit reached" in str(exc.value) and "prompt echo" not in str(exc.value)
+
+
+def test_transient_503_is_retried_on_the_same_provider(monkeypatch):
+    """Codex quota-exhausted + Gemini momentarily 503 must still deliver."""
+    from app.sync import llm_client as l
+
+    calls = []
+
+    def fake(provider, *, model, **kw):
+        calls.append(provider)
+        if provider == "codex":
+            raise RuntimeError("codex exec exit=1: ERROR: You've hit your usage limit.")
+        if calls.count("gemini") < 3:
+            raise RuntimeError("503 UNAVAILABLE. This model is currently experiencing high demand.")
+        return "PLAN"
+
+    monkeypatch.setattr(l, "provider_chain", lambda: ["codex", "gemini"])
+    monkeypatch.setattr(l, "_generate_with", fake)
+    monkeypatch.setattr(l, "_TRANSIENT_BACKOFF_S", 0)
+    assert l._generate_chain(system="s", user="u", model=None, reasoning="low",
+                             timeout_s=5, max_output_tokens=None, temperature=None) == "PLAN"
+    assert calls.count("codex") == 1  # quota is not retried
+    assert calls.count("gemini") == 3
+
+
+def test_quota_is_not_treated_as_transient():
+    from app.sync.llm_client import _is_transient
+
+    assert not _is_transient("ERROR: You've hit your usage limit (429)")
+    assert _is_transient("503 UNAVAILABLE")
