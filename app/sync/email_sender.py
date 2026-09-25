@@ -391,7 +391,20 @@ def _build_action_buttons_html(
 _REPORT_KINDS = {
     "weekly_retrospective": "Weekly Retrospective",
     "health_os_brief": "Health OS brief",
+    # Keeps "Daily Health Plan" in the subject so mail filters still match,
+    # but says up front that no plan was generated.
+    "advisor_error": "Daily Health Plan (advisor failed)",
 }
+
+
+def summarize_kinds(kinds: List[Any]) -> str:
+    """"sperm_test ×17, blood_test ×4" instead of every lab file's kind in a row."""
+    counts: Dict[str, int] = {}
+    for kind in kinds:
+        if kind:
+            counts[str(kind)] = counts.get(str(kind), 0) + 1
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return ", ".join(k if n == 1 else f"{k} \u00d7{n}" for k, n in ranked) or "None"
 
 
 def report_kind(advice: Dict[str, Any]) -> str:
@@ -481,7 +494,7 @@ def send_advice_email(config: SyncConfig, advice: Dict[str, Any]) -> None:
 
     ctx = advice.get("context_summary", {})
     oura_badge = "Yes" if ctx.get("fitbit_available") else "No"
-    lab_types = ", ".join(ctx.get("lab_report_types", [])) or "None"
+    lab_types = summarize_kinds(ctx.get("lab_report_types", []))
     scan_count = ctx.get("image_analyses_count", 0)
     scan_info = f" &bull; Image scans: {scan_count}" if scan_count else ""
 

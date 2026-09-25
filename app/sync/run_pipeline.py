@@ -157,7 +157,7 @@ def main() -> int:
             print(f"  FAIL: {exc}")
             # Create fallback advice with error info
             advice = {
-                "report_type": "daily_advisor",
+                "report_type": "advisor_error",
                 "date": day.isoformat(),
                 "generated_at": datetime.utcnow().isoformat() + "Z",
                 "model": "N/A",

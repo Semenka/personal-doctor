@@ -111,3 +111,22 @@ def test_daily_email_keeps_the_data_line(monkeypatch):
         "advice": "1. **Walk**", "context_summary": {"fitbit_available": True, "lab_report_types": ["sperm_test"]},
     })
     assert "Daily Health Plan" in body and "Fitbit Air data: Yes" in body
+
+
+def test_advisor_error_email_says_so_without_a_false_data_line(monkeypatch):
+    # 2026-09-25: the codex failure report went out as "Daily Health Plan"
+    # with "Fitbit Air data: No" although the Fitbit Air had synced.
+    body = _send(monkeypatch, {
+        "report_type": "advisor_error", "date": "2026-09-25", "model": "N/A",
+        "advice": "**Advisor generation failed.**", "context_summary": {"fitbit_available": False},
+    })
+    assert "Daily Health Plan (advisor failed)" in body
+    assert "Fitbit Air data:" not in body
+
+
+def test_lab_kinds_are_counted_not_repeated():
+    from app.sync.email_sender import summarize_kinds
+
+    kinds = ["blood_test"] * 4 + ["sperm_test"] * 17 + ["genetic_test", None]
+    assert summarize_kinds(kinds) == "sperm_test ×17, blood_test ×4, genetic_test"
+    assert summarize_kinds([]) == "None"

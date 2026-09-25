@@ -647,7 +647,7 @@ def run_daily_advisor() -> None:
         if config.email_to and config.smtp_host:
             try:
                 fallback = {
-                    "report_type": "daily_advisor",
+                    "report_type": "advisor_error",
                     "date": day.isoformat(),
                     "generated_at": datetime.utcnow().isoformat() + "Z",
                     "model": "N/A",
