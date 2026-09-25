@@ -101,3 +101,14 @@ def test_declared_category_beats_keywords():
     assert auto_complete._classify("Ubiquinol With Fat", "take with lunch", "supplement") == "unsensable"
     # No/unknown category → keyword fallback as before
     assert auto_complete._classify("Evening walk", "20 min walk", "") == "movement"
+
+
+def test_display_kind_separates_missed_from_unrecorded():
+    from app.sync.action_lifecycle import display_kind
+
+    now = datetime(2026, 9, 25, 20, 0, tzinfo=TZ)
+    walk = {"title": "Evening walk", "description": "20 min walk", "category": "movement", "done": False}
+    pill = {"title": "Ubiquinol", "description": "take with lunch", "category": "supplement", "done": False}
+    assert display_kind(walk, "2026-09-24", now) == "missed"
+    assert display_kind(pill, "2026-09-24", now) == "unrecorded"
+    assert display_kind(dict(pill, due_end="21:30"), "2026-09-25", now) == "open"

@@ -618,8 +618,14 @@ def _render_dashboard(today, history, streaks, averages, trends, config) -> str:
         pct = f"{rate*100:.0f}%"
         bar_color = "#059669" if rate >= 0.67 else "#d97706" if rate >= 0.34 else "#dc2626"
         bar_width = max(rate * 100, 4)
+        # Same statuses as the email: expired tasks never read as open.
+        from datetime import datetime as _dt
+
+        from app.sync.action_lifecycle import DISPLAY_ICON, display_kind
+
+        _now = _dt.now(tz=config.timezone)
         action_names = " | ".join(
-            f"{'&#x2705;' if a.get('done') else '&#x2B1C;'} {a.get('title', '?')}"
+            f"{DISPLAY_ICON[display_kind(a, d, _now)]} {a.get('title', '?')}"
             for a in actions
         )
         history_rows += (

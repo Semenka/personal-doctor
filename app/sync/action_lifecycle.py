@@ -109,3 +109,20 @@ def action_state(action: Dict[str, Any], day: str, now: datetime) -> str:
     if hh < 4:
         deadline += timedelta(days=1)
     return "expired" if now > deadline else "open"
+
+
+DISPLAY_ICON = {"done": "&#x2705;", "missed": "&#x274C;", "unrecorded": "&#x26AA;", "open": "&#x23F3;"}
+
+
+def display_kind(action: Dict[str, Any], day: str, now: datetime) -> str:
+    """'done' | 'open' | 'missed' | 'unrecorded' — the status every dashboard
+    shows. An expired task is 'missed' only when the watch can judge it
+    (movement / sleep); otherwise it was simply never recorded."""
+    from .auto_complete import _classify
+
+    a = enrich(dict(action))
+    state = action_state(a, day, now)
+    if state != "expired":
+        return state
+    cat = _classify(a.get("title", ""), a.get("description", ""), a.get("category") or "")
+    return "missed" if cat in ("movement", "sleep") else "unrecorded"
