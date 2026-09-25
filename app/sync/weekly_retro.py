@@ -64,14 +64,30 @@ def _delta_bullets(week_metrics: Dict[str, Any]) -> List[str]:
 
 
 def _action_totals(config: SyncConfig, today: date) -> Dict[str, int]:
+    """Counts by the same status every dashboard shows (done / missed /
+    unrecorded / open). A bare done-of-total read "0 of 12" as failure when
+    most of those tasks (supplements, meals) simply can't be recorded."""
+    from .action_lifecycle import display_kind
     from .action_tracker import load_action_history
 
-    hist = load_action_history(config.data_dir, num_days=7)
-    total = sum(len(d.get("actions", [])) for d in hist)
-    done = sum(
-        sum(1 for a in d.get("actions", []) if a.get("done")) for d in hist
-    )
-    return {"total": total, "done": done}
+    now = datetime.now(tz=config.timezone)
+    counts = {"total": 0, "done": 0, "missed": 0, "unrecorded": 0, "open": 0}
+    for d in load_action_history(config.data_dir, num_days=7):
+        for a in d.get("actions", []):
+            counts["total"] += 1
+            counts[display_kind(a, d["date"], now)] += 1
+    return counts
+
+
+def _actions_line(totals: Dict[str, int]) -> str:
+    parts = [f"✅ {totals['done']} done"]
+    if totals.get("missed"):
+        parts.append(f"❌ {totals['missed']} missed (watch-judged)")
+    if totals.get("unrecorded"):
+        parts.append(f"⚪ {totals['unrecorded']} not recorded")
+    if totals.get("open"):
+        parts.append(f"⏳ {totals['open']} open")
+    return " · ".join(parts) + f" — of {totals['total']} planned"
 
 
 def _gemini_insight(config: SyncConfig, data: Dict[str, Any]) -> str:
@@ -142,10 +158,11 @@ def run_weekly_retro() -> None:
     else:
         body_md.append("- Not enough data for comparison.")
     body_md.append("")
-    body_md.append(
-        f"### Actions this week\nYou completed **{totals['done']}** "
-        f"action(s) out of {totals['total']} planned."
-    )
+    body_md.append(f"### Actions this week\n{_actions_line(totals)}")
+    if totals.get("unrecorded"):
+        body_md.append(
+            "⚪ = no tick and nothing the watch can judge — not a failure."
+        )
     if effects:
         body_md.append("")
         body_md.append("### What moved the needle (last 14 days)")
@@ -184,7 +201,7 @@ def run_weekly_retro() -> None:
     try:
         from .whatsapp_sender import _run_openclaw_send
 
-        head = f"📈 Week ending {today.isoformat()}: {totals['done']} action(s) done."
+        head = f"📈 Week ending {today.isoformat()}: {_actions_line(totals)}"
         if delta_lines:
             head += "\n" + delta_lines[0]
         if insight:

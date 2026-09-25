@@ -387,7 +387,9 @@ def start_server():
     # data are broken. Easier than digging through logs after a regression.
     def _self_check() -> None:
         import subprocess
-        # 1. WhatsApp dry-run (1s — does not actually send).
+        # 1. WhatsApp dry-run (does not actually send). ~4s idle, >10s under
+        #    boot load — same 30s budget as a real send, or a slow CLI start
+        #    reads as a WhatsApp outage (2026-09-25 20:46).
         #    Resolve the binary the same way the sender does: a bare "openclaw"
         #    hits whatever the launchd PATH pins, which may be a copy bound to
         #    an unsupported Node and would report a false outage here.
@@ -400,7 +402,7 @@ def start_server():
                 [openclaw_bin, "message", "send", "--channel", "whatsapp",
                  "--target", os.getenv("WHATSAPP_TARGET", "+393491913903"),
                  "--message", "selfcheck", "--dry-run"],
-                capture_output=True, text=True, timeout=10, check=False,
+                capture_output=True, text=True, timeout=30, check=False,
             )
             if r.returncode != 0 or "Outbound not configured" in (r.stderr + r.stdout):
                 logger.warning(

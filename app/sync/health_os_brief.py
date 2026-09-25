@@ -112,10 +112,21 @@ def _system_health(config: SyncConfig, today: date) -> str:
 
         silence = watch_silence(config, today)
         device_txt = describe_device_silence(silence)
-        if device_txt:
+        if device_txt and int(silence.get("silent_days") or 0) < 3:
+            # Another watch is still reporting (Pebble is bursty by nature):
+            # recovery data keeps flowing, so this is a note, not an outage.
+            reporting = [
+                d.get("label", k) for k, d in (silence.get("devices") or {}).items()
+                if int(d.get("silent_days") or 0) < 3
+            ]
+            lines.append(
+                f"- Watch data: {device_txt}; "
+                f"{' and '.join(reporting) or 'another watch'} reporting"
+            )
+        elif device_txt:
             lines.append(
                 f"- ⚠️ Watch data: {device_txt} — steps are phone-sensor; "
-                "sleep/HRV absent from the silent device"
+                "sleep/HRV absent"
             )
             issues.append("watch not syncing")
         else:

@@ -130,3 +130,40 @@ def test_lab_kinds_are_counted_not_repeated():
     kinds = ["blood_test"] * 4 + ["sperm_test"] * 17 + ["genetic_test", None]
     assert summarize_kinds(kinds) == "sperm_test ×17, blood_test ×4, genetic_test"
     assert summarize_kinds([]) == "None"
+
+
+def test_brief_single_silent_watch_is_a_note_not_an_issue(tmp_path):
+    """Pebble quiet while the Fitbit Air reports: recovery data still flows."""
+    from app.sync.health_os_brief import _system_health
+
+    cfg = types.SimpleNamespace(data_dir=tmp_path)
+    today = date(2026, 9, 27)
+    for i in range(7):
+        _write(tmp_path, date.fromordinal(today.toordinal() - i).isoformat(),
+               sleep_hours=7.0, hrv=22.0, resting_hr=60, via="google_health_api",
+               data_origins=[PIXEL, CLOUD] + ([PEBBLE] if i >= 4 else []))
+    out = _system_health(cfg, today)
+    assert "Pebble silent 4d" in out and "Fitbit Air reporting" in out
+    assert "phone-sensor" not in out and "Open issues" not in out
+
+
+def test_retro_counts_unrecorded_apart_from_missed(tmp_path):
+    from datetime import datetime, timedelta
+
+    from app.sync.action_tracker import _actions_path
+    from app.sync.weekly_retro import _action_totals, _actions_line
+
+    tz = ZoneInfo("Europe/Paris")
+    cfg = types.SimpleNamespace(data_dir=tmp_path, timezone=tz)
+    past = (datetime.now(tz).date() - timedelta(days=2)).isoformat()
+    path = _actions_path(tmp_path, past)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"actions": [
+        {"number": 1, "title": "Walk 30 min", "description": "**Category:** Movement", "done": True},
+        {"number": 2, "title": "Walk 20 min after lunch", "description": "**Category:** Movement"},
+        {"number": 3, "title": "Take zinc", "description": "**Category:** Supplements"},
+    ]}))
+    totals = _action_totals(cfg, datetime.now(tz).date())
+    assert totals == {"total": 3, "done": 1, "missed": 1, "unrecorded": 1, "open": 0}
+    line = _actions_line(totals)
+    assert "✅ 1 done" in line and "⚪ 1 not recorded" in line and "of 3 planned" in line
