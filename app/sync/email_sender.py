@@ -388,6 +388,30 @@ def _build_action_buttons_html(
     )
 
 
+_REPORT_KINDS = {
+    "weekly_retrospective": "Weekly Retrospective",
+    "health_os_brief": "Health OS brief",
+    # Keeps "Daily Health Plan" in the subject so mail filters still match,
+    # but says up front that no plan was generated.
+    "advisor_error": "Daily Health Plan (advisor failed)",
+}
+
+
+def summarize_kinds(kinds: List[Any]) -> str:
+    """"sperm_test ×17, blood_test ×4" instead of every lab file's kind in a row."""
+    counts: Dict[str, int] = {}
+    for kind in kinds:
+        if kind:
+            counts[str(kind)] = counts.get(str(kind), 0) + 1
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return ", ".join(k if n == 1 else f"{k} \u00d7{n}" for k, n in ranked) or "None"
+
+
+def report_kind(advice: Dict[str, Any]) -> str:
+    """Human heading for the report type — subject line and page heading."""
+    return _REPORT_KINDS.get(str(advice.get("report_type") or ""), "Daily Health Plan")
+
+
 def send_advice_email(config: SyncConfig, advice: Dict[str, Any]) -> None:
     """Send the daily advice as an HTML email."""
     if not config.email_to:
@@ -470,9 +494,20 @@ def send_advice_email(config: SyncConfig, advice: Dict[str, Any]) -> None:
 
     ctx = advice.get("context_summary", {})
     oura_badge = "Yes" if ctx.get("fitbit_available") else "No"
-    lab_types = ", ".join(ctx.get("lab_report_types", [])) or "None"
+    lab_types = summarize_kinds(ctx.get("lab_report_types", []))
     scan_count = ctx.get("image_analyses_count", 0)
     scan_info = f" &bull; Image scans: {scan_count}" if scan_count else ""
+
+    # The weekly retro and the fallback error report reuse this sender. They
+    # used to go out under the daily heading with a "Fitbit Air data: No |
+    # Lab reports: None" line that described nothing about them.
+    kind = report_kind(advice)
+    is_daily = kind == "Daily Health Plan"
+    meta_html = (
+        f"Fitbit Air data: {oura_badge} &bull; Lab reports: {lab_types}{scan_info} &bull; "
+        if is_daily else ""
+    ) + f"Model: {advice.get('model', 'N/A')}"
+    meta_plain = f"Fitbit Air data: {oura_badge} | Lab reports: {lab_types}\n" if is_daily else ""
 
     html = f"""\
 <html>
@@ -488,9 +523,9 @@ def send_advice_email(config: SyncConfig, advice: Dict[str, Any]) -> None:
 </style>
 </head>
 <body>
-  <h2>Daily Health Plan &mdash; {day}</h2>
+  <h2>{kind} &mdash; {day}</h2>
   <div class="meta">
-    Fitbit Air data: {oura_badge} &bull; Lab reports: {lab_types}{scan_info} &bull; Model: {advice.get('model', 'N/A')}
+    {meta_html}
   </div>
   {best_mover_html}
   {outcomes_html}
@@ -507,14 +542,6 @@ def send_advice_email(config: SyncConfig, advice: Dict[str, Any]) -> None:
 </html>"""
 
     msg = MIMEMultipart("alternative")
-    # The weekly retro and the fallback error report reuse this sender; a
-    # "Daily Health Plan" subject on them made the inbox look like the daily
-    # digest went out twice (2026-08-30).
-    subject_by_type = {
-        "weekly_retrospective": "Weekly Retrospective",
-        "health_os_brief": "Health OS brief",
-    }
-    kind = subject_by_type.get(str(advice.get("report_type") or ""), "Daily Health Plan")
     msg["Subject"] = f"{kind} \u2014 {day}"
     msg["From"] = config.smtp_user or f"health-advisor@{config.smtp_host}"
     msg["To"] = config.email_to
@@ -544,8 +571,8 @@ def send_advice_email(config: SyncConfig, advice: Dict[str, Any]) -> None:
             action_links += f"Local dashboard: {config.server_url}/dashboard\n"
 
     plain = (
-        f"Daily Health Plan \u2014 {day}\n"
-        f"Fitbit Air data: {oura_badge} | Lab reports: {lab_types}\n\n"
+        f"{kind} \u2014 {day}\n"
+        f"{meta_plain}\n"
         f"{advice_text}\n\n"
         f"{action_links}"
         f"Generated: {advice.get('generated_at', '')}"

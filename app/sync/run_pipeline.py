@@ -115,26 +115,12 @@ def main() -> int:
         except Exception as exc:
             print(f"  NOTE: watch-silence check skipped: {exc}")
         silent_days = int(silence.get("silent_days") or 0)
-        # Full banner only when EVERY watch is silent; a single quiet watch
-        # (e.g. Pebble while the Fitbit Air reports) gets a short true note.
-        if not stale_banner and silent_days < 3 and device_txt:
-            from .pipeline import partial_silence_note
+        if (silent_days >= 3 or device_txt) and not stale_banner:
+            from .pipeline import watch_banner
 
-            stale_banner = partial_silence_note(silence) or None
-        if silent_days >= 3 and not stale_banner:
-            last = silence.get("last_watch_date")
-            last_txt = f"last watch data {last}" if last else "no watch data on record"
-            headline = device_txt or f"{silent_days} days without watch data"
-            stale_banner = (
-                f"### ⚠️ Watch not syncing — {headline} ({last_txt})\n\n"
-                "Steps below are the phone's own sensor; sleep, HRV, resting HR and "
-                "SpO2 are missing, not low. Fitbit Air: link the Google Health cloud "
-                f"once from your phone at {config.server_url}/auth/google-health "
-                "(or `.venv/bin/python -m scripts.google_health_api_auth` on the Mac), "
-                "or fix the phone's Google Fit ↔ Health Connect sync. Pebble: Pebble "
-                "app → Settings → Health → *Sync to Health Connect*."
-            )
-            print(f"  NOTE: {headline} ({last_txt}). Generating full advice with a banner.")
+            stale_banner = watch_banner(config, silence) or None
+            print(f"  NOTE: {device_txt or f'{silent_days}d without watch data'}. "
+                  "Generating full advice with a banner.")
 
         try:
             if advice is None:
@@ -171,7 +157,7 @@ def main() -> int:
             print(f"  FAIL: {exc}")
             # Create fallback advice with error info
             advice = {
-                "report_type": "daily_advisor",
+                "report_type": "advisor_error",
                 "date": day.isoformat(),
                 "generated_at": datetime.utcnow().isoformat() + "Z",
                 "model": "N/A",

@@ -120,15 +120,31 @@ def _system_health(config: SyncConfig, today: date) -> str:
             issues.append("watch not syncing")
         else:
             lines.append("- Watch data: Fitbit Air and Pebble both reporting")
+
+        # Recovery metrics: measured, not assumed. This used to be a
+        # hard-coded "no HRV/sleep reaching the system" line that kept
+        # printing after the Google Health cloud link fixed it (2026-09-06).
+        recovery_days = 0
+        for i in range(7):
+            d = date.fromordinal(today.toordinal() - i)
+            try:
+                p = load_wearable_payload_file(
+                    config.data_dir, d.isoformat(), source="fitbit"
+                )
+            except Exception:
+                continue
+            if p and any(float(p.get(k) or 0) > 0 for k in ("sleep_hours", "hrv", "resting_hr")):
+                recovery_days += 1
+        lines.append(f"- Recovery data (sleep/HRV/resting HR): {recovery_days}/7 days")
+        if recovery_days == 0:
+            issues.append(
+                "no HRV/sleep/resting-HR reaching the system (link the Google Health "
+                "cloud: /auth/google-health)"
+            )
+        elif recovery_days < 5:
+            issues.append(f"recovery data on only {recovery_days}/7 days")
     except Exception:
         lines.append("- Wearable sync: unknown")
-
-    # Recovery-data gap is a standing, unresolved system failure — keep it
-    # visible every week until it is actually fixed.
-    issues.append(
-        "no HRV/sleep/resting-HR reaching the system (Health Connect → Google "
-        "Fit relays activity only)"
-    )
 
     try:
         from ..research.journal_watch import load_latest_journal_watch

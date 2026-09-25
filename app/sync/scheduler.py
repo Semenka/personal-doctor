@@ -634,29 +634,10 @@ def run_daily_advisor() -> None:
     from .pipeline import describe_device_silence
 
     device_txt = describe_device_silence(silence)
-    # Full banner only when EVERY watch is silent; a single quiet watch
-    # (e.g. Pebble while the Fitbit Air reports) gets a short true note.
-    if not stale_banner and silent_days < 3 and device_txt:
-        from .pipeline import partial_silence_note
+    if (silent_days >= 3 or device_txt) and not stale_banner:
+        from .pipeline import watch_banner
 
-        stale_banner = partial_silence_note(silence) or None
-    if silent_days >= 3 and not stale_banner:
-        last = silence.get("last_watch_date")
-        last_txt = f"last watch data {last}" if last else "no watch data on record"
-        headline = device_txt or f"{silent_days} days without watch data"
-        stale_banner = (
-            f"### ⚠️ Watch not syncing — {headline} ({last_txt})\n\n"
-            "Steps below are the phone's own sensor; sleep, HRV, resting HR and "
-            "SpO2 are missing, not low. Google Fit's streams show the Health "
-            "Connect relay died for *both* the Fitbit and Oura apps (heart rate "
-            "2026-06-13, sleep 2026-08-04), so the break is on the phone's Google "
-            "Fit ↔ Health Connect link: Google Fit → Profile → Settings → Health "
-            "Connect → re-enable sync and *read* for sleep/heart/SpO2; then Fitbit "
-            "app → Health Connect → *write* on. Or link the Google Health cloud once to "
-            f"bypass the phone — from your phone: {config.server_url}/auth/google-health "
-            "(or `.venv/bin/python -m scripts.google_health_api_auth` on the Mac). "
-            "Pebble: Pebble app → Settings → Health → *Sync to Health Connect*."
-        )
+        stale_banner = watch_banner(config, silence) or None
 
     try:
         advice = generate_daily_advice(config, day)
@@ -666,7 +647,7 @@ def run_daily_advisor() -> None:
         if config.email_to and config.smtp_host:
             try:
                 fallback = {
-                    "report_type": "daily_advisor",
+                    "report_type": "advisor_error",
                     "date": day.isoformat(),
                     "generated_at": datetime.utcnow().isoformat() + "Z",
                     "model": "N/A",
@@ -674,12 +655,12 @@ def run_daily_advisor() -> None:
                         f"## Daily Health Plan — {day.isoformat()}\n\n"
                         f"**Advisor generation failed.**\n\n"
                         f"Error: {exc}\n\n"
-                        "The AI advisor could not generate today's plan. "
-                        "This may be caused by:\n"
-                        "- Google API quota exceeded\n"
-                        "- Temporary API outage\n"
-                        "- Invalid API key\n\n"
-                        "Please check the server logs for details."
+                        "Every LLM provider in the chain failed (Codex CLI, then "
+                        "the fallbacks with credentials). Usual causes:\n"
+                        "- codex CLI: expired login (`codex login`), a stale "
+                        "install on launchd's PATH, or a usage limit\n"
+                        "- Gemini / OpenAI fallback: no or revoked API key\n\n"
+                        "Check ~/personal-doctor/logs/personal-doctor.log."
                     ),
                     "context_summary": {
                         "fitbit_available": False,

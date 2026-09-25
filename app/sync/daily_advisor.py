@@ -937,6 +937,15 @@ def generate_daily_advice(
         reasoning="high",
         timeout_s=600,
     )
+    # A fallback provider may have answered — say so in the report.
+    try:
+        from .llm_client import last_generation_info
+
+        info = last_generation_info()
+        if info.get("model"):
+            model = info["model"] + (" (fallback)" if info.get("fallback") else "")
+    except Exception:
+        pass
 
     # Parse and save action items for tracking (email buttons + feedback loop)
     try:
