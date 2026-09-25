@@ -446,21 +446,36 @@ def render_whatsapp_research(config: SyncConfig, day: str, limit: int = 3) -> st
 
 def render_whatsapp_protocol(
     actions: List[Dict[str, Any]],
+    day: Optional[str] = None,
+    now: Optional["datetime"] = None,
 ) -> str:
-    """Today's protocol (actions) with green/red completion status for WhatsApp.
+    """Today's protocol for WhatsApp with lifecycle-aware status.
 
-    🟢 done · 🔴 still open. Mirrors the email's action representation.
+    🟢 done · ⏳ still doable (with its time) · ⚪ window passed, not recorded.
+    At 08:00 every task used to show 🔴 although none was due yet.
     """
     if not actions:
         return ""
+    from datetime import datetime as _dt
+
+    from .action_lifecycle import action_state, enrich
+
+    now = now or _dt.now().astimezone()
+    day = day or now.date().isoformat()
     lines = ["📋 Today's protocol"]
     for i, a in enumerate(actions, 1):
-        done = a.get("done")
-        dot = "🟢" if done else "🔴"
+        a = enrich(dict(a))
+        state = action_state(a, day, now)
         title = a.get("title", "?")
-        if len(title) > 60:
-            title = title[:57].rstrip() + "…"
-        lines.append(f"{dot} {i}. {title}")
+        if len(title) > 55:
+            title = title[:52].rstrip() + "…"
+        if state == "done":
+            lines.append(f"🟢 {i}. {title}")
+        elif state == "open":
+            due = f" · by {a['due_end']}" if a.get("due_end") else ""
+            lines.append(f"⏳ {i}. {title}{due}")
+        else:
+            lines.append(f"⚪ {i}. {title} (window passed)")
     return "\n".join(lines)
 
 

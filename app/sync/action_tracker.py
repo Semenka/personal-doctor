@@ -25,6 +25,9 @@ ACTION_PATTERN = re.compile(
 )
 
 
+from .action_lifecycle import enrich  # noqa: E402
+
+
 def _actions_dir(data_dir: Path) -> Path:
     d = data_dir / "actions"
     d.mkdir(parents=True, exist_ok=True)
@@ -40,13 +43,13 @@ def parse_actions(advice_text: str, day: str) -> List[Dict[str, Any]]:
     matches = ACTION_PATTERN.findall(advice_text)
     actions = []
     for i, (num, title, description) in enumerate(matches):
-        actions.append({
+        actions.append(enrich({
             "idx": i,
             "title": title.strip(),
             "description": description.strip(),
             "done": False,
             "done_at": None,
-        })
+        }))
     return actions
 
 
@@ -110,7 +113,7 @@ def load_action_history(
     history = []
     for i in range(num_days):
         day = (today - timedelta(days=i)).isoformat()
-        actions = load_actions(data_dir, day)
+        actions = [enrich(a) for a in load_actions(data_dir, day)]
         if actions:
             done_count = sum(1 for a in actions if a.get("done"))
             history.append({
@@ -165,28 +168,28 @@ def load_actions_with_sheets(
     try:
         from .sheets_tracker import read_action_status, sync_sheet_to_local
 
-        actions = read_action_status(config, day)
-        if actions:
-            # Keep local JSON in sync for offline use / streaks
+        if read_action_status(config, day):
+            # Merge the Sheet's ticks into local, then return the richer local
+            # record (description, due time, auto-credit source survive).
             sync_sheet_to_local(config, day)
-            return actions
     except Exception as exc:
         logger.warning(f"Sheet read failed, using local: {exc}")
-    return load_actions(config.data_dir, day)
+    return [enrich(a) for a in load_actions(config.data_dir, day)]
 
 
 def load_action_history_with_sheets(
     config: SyncConfig, num_days: int = 7
 ) -> List[Dict[str, Any]]:
-    """Load action history from Google Sheet (falls back to local JSON)."""
-    try:
-        from .sheets_tracker import read_action_history as sheet_history
+    """Action history, local-first.
 
-        history = sheet_history(config, num_days)
-        if history:
-            return history
+    The tracker Sheet only holds live (unexpired) tasks now — expired rows are
+    archived and their ticks merged into the local JSON — so history comes
+    from local files. Today's file first absorbs any tick made in the Sheet.
+    """
+    try:
+        load_actions_with_sheets(config, date.today().isoformat())
     except Exception as exc:
-        logger.warning(f"Sheet history read failed, using local: {exc}")
+        logger.warning(f"Sheet overlay for today failed: {exc}")
     return load_action_history(config.data_dir, num_days)
 
 

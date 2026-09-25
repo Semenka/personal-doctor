@@ -457,14 +457,124 @@ def mark_action_undone_sheet(
 
 # ─── Sync Sheet → local JSON ───────────────────────────────────────────────
 
+def merge_sheet_status(
+    local: List[Dict[str, Any]], sheet: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Merge Sheet tick state INTO the local actions — never replace them.
+
+    The old sync overwrote the local file with the Sheet's four columns,
+    dropping each action's description (what auto-credit classifies on), its
+    when/due time, and the auto-credit source tag. Done is OR-ed so a tick in
+    either place survives; everything else stays local.
+    """
+    by_idx = {a.get("idx"): dict(a) for a in local}
+    for s in sheet:
+        cur = by_idx.get(s.get("idx"))
+        if cur is None:
+            by_idx[s.get("idx")] = dict(s)
+            continue
+        if s.get("done") and not cur.get("done"):
+            cur["done"] = True
+            cur["done_at"] = s.get("done_at") or cur.get("done_at")
+            cur.setdefault("source", "sheet")
+    return [by_idx[k] for k in sorted(by_idx, key=lambda i: (i is None, i))]
+
+
 def sync_sheet_to_local(config: SyncConfig, day: str) -> None:
     """Pull action status from Sheet and update the local JSON cache."""
     try:
-        from .action_tracker import save_actions
+        from .action_tracker import load_actions, save_actions
 
-        actions = read_action_status(config, day)
-        if actions:
-            save_actions(config.data_dir, day, actions)
-            logger.info(f"Synced Sheet → local for {day}: {len(actions)} actions.")
+        sheet_actions = read_action_status(config, day)
+        if sheet_actions:
+            merged = merge_sheet_status(load_actions(config.data_dir, day), sheet_actions)
+            save_actions(config.data_dir, day, merged)
+            logger.info(f"Synced Sheet → local for {day}: {len(merged)} actions.")
     except Exception as exc:
         logger.warning(f"Failed to sync Sheet to local: {exc}")
+
+
+# ─── Expiry: keep the tracker to live tasks only ───────────────────────────
+
+ARCHIVE_TAB_NAME = "Archive"
+
+
+def _ensure_archive_tab(sheets, sheet_id: str) -> None:
+    meta = sheets.spreadsheets().get(spreadsheetId=sheet_id).execute()
+    titles = [s["properties"]["title"] for s in meta["sheets"]]
+    if ARCHIVE_TAB_NAME in titles:
+        return
+    sheets.spreadsheets().batchUpdate(
+        spreadsheetId=sheet_id,
+        body={"requests": [{"addSheet": {"properties": {"title": ARCHIVE_TAB_NAME}}}]},
+    ).execute()
+    sheets.spreadsheets().values().update(
+        spreadsheetId=sheet_id,
+        range=f"{ARCHIVE_TAB_NAME}!A1:E1",
+        valueInputOption="RAW",
+        body={"values": [["Date", "#", "Action Title", "Done", "Done At"]]},
+    ).execute()
+
+
+def archive_expired_actions(config: SyncConfig, today: str) -> int:
+    """Move every row dated before ``today`` from Actions to the Archive tab.
+
+    The Actions tab is the phone's one-tap checklist; it had grown to 344
+    rows back to March with today's tasks at the bottom. Runs at 08:00 before
+    the new day's rows are added, so yesterday's tasks stay tickable
+    overnight and expire when the next plan arrives. Before a row leaves,
+    its tick is merged into the local actions JSON (the durable history), so
+    nothing ticked is ever lost. Returns the number of rows archived.
+    """
+    from .action_tracker import load_actions, save_actions
+
+    sheet_id = get_or_create_tracker_sheet(config)
+    sheets = _build_sheets_service(config)
+    values = sheets.spreadsheets().values().get(
+        spreadsheetId=sheet_id, range=f"{SHEET_TAB_NAME}!A:E",
+    ).execute().get("values", [])
+
+    expired: List[tuple] = []  # (0-based row index, row)
+    for i, row in enumerate(values[1:], start=1):
+        if row and len(row) >= 3 and row[0] < today:
+            expired.append((i, row))
+    if not expired:
+        return 0
+
+    # 1) Preserve ticks in the local history first.
+    by_day: Dict[str, List[Dict[str, Any]]] = {}
+    for _, row in expired:
+        try:
+            idx = int(row[1]) - 1
+        except (ValueError, IndexError):
+            continue
+        by_day.setdefault(row[0], []).append({
+            "idx": idx, "title": row[2],
+            "done": _parse_done(row[3]) if len(row) > 3 else False,
+            "done_at": row[4] if len(row) > 4 and row[4] else None,
+        })
+    for day, sheet_actions in by_day.items():
+        merged = merge_sheet_status(load_actions(config.data_dir, day), sheet_actions)
+        save_actions(config.data_dir, day, merged)
+
+    # 2) Copy to Archive, then 3) delete from Actions (bottom-up so indices hold).
+    _ensure_archive_tab(sheets, sheet_id)
+    sheets.spreadsheets().values().append(
+        spreadsheetId=sheet_id, range=f"{ARCHIVE_TAB_NAME}!A:E",
+        valueInputOption="USER_ENTERED", insertDataOption="INSERT_ROWS",
+        body={"values": [(row + [""] * 5)[:5] for _, row in expired]},
+    ).execute()
+    meta = sheets.spreadsheets().get(spreadsheetId=sheet_id).execute()
+    tab_id = next(s["properties"]["sheetId"] for s in meta["sheets"]
+                  if s["properties"]["title"] == SHEET_TAB_NAME)
+    requests = [{
+        "deleteDimension": {"range": {
+            "sheetId": tab_id, "dimension": "ROWS",
+            "startIndex": i, "endIndex": i + 1,
+        }}
+    } for i, _ in sorted(expired, reverse=True)]
+    sheets.spreadsheets().batchUpdate(
+        spreadsheetId=sheet_id, body={"requests": requests},
+    ).execute()
+    logger.info(f"Archived {len(expired)} expired action row(s) from the tracker Sheet.")
+    return len(expired)

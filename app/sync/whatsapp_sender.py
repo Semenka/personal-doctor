@@ -489,7 +489,7 @@ def send_whatsapp_advice(config: SyncConfig, advice: Dict[str, Any]) -> bool:
         from .biomarker_dashboard import render_whatsapp_protocol
 
         actions = load_actions_with_sheets(config, day)
-        proto = render_whatsapp_protocol(actions)
+        proto = render_whatsapp_protocol(actions, day=day)
         if proto:
             lines.append("")
             lines.append(proto)
@@ -549,8 +549,20 @@ def send_whatsapp_advice(config: SyncConfig, advice: Dict[str, Any]) -> bool:
 def send_whatsapp_evening_nudge(
     config: SyncConfig, day: str, actions: List[Dict[str, Any]]
 ) -> bool:
-    """21:00 reminder if any of today's actions are still open."""
-    open_actions = [a for a in actions if not a.get("done")]
+    """21:00 reminder for today's actions that are STILL doable.
+
+    Expired tasks (window passed, e.g. a 13:00 lunch supplement) are no
+    longer nudged — asking for them at 21:00 was noise.
+    """
+    from datetime import datetime as _dt
+
+    from .action_lifecycle import action_state, enrich
+
+    now = _dt.now(tz=config.timezone)
+    open_actions = [
+        a for a in (enrich(dict(x)) for x in actions)
+        if action_state(a, day, now) == "open"
+    ]
     if not open_actions:
         return False
 
@@ -561,7 +573,8 @@ def send_whatsapp_evening_nudge(
         "",
     ]
     for i, a in enumerate(top, start=1):
-        lines.append(f"{i}. {a.get('title', '?')}")
+        due = f" — by {a['due_end']}" if a.get("due_end") else ""
+        lines.append(f"{i}. {a.get('title', '?')}{due}")
     lines.append("")
     lines.append(
         "Want to knock one out tonight? " + _completion_footer(config)

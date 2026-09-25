@@ -51,7 +51,7 @@ _MOVEMENT_KW = (
 )
 _SLEEP_KW = (
     "sleep", "bedtime", "lights out", "lights-out", "lights off",
-    "in bed", "wind down", "wind-down", "nsdr", "nap",
+    "in bed", "wind down", "wind-down",
 )
 # Categories we explicitly cannot sense from Oura — never auto-fail these.
 _UNSENSABLE_KW = (
@@ -60,6 +60,9 @@ _UNSENSABLE_KW = (
     "cold shower", "cold rinse", "cold plunge", "ice bath",
     "daylight", "sunlight", "sun exposure", "morning light", "bright light",
     "breathing", "box breath", "meditat", "scrotal", "underwear", "laptop",
+    # Naps / NSDR never appear in the main-sleep record the watch reports,
+    # so "sleep_hours" can neither confirm nor refute them.
+    "nap", "nsdr",
 )
 
 
@@ -107,9 +110,45 @@ def _merge_activity(
     }
 
 
-def _classify(title: str, description: str) -> str:
-    """Return 'movement' | 'sleep' | 'unsensable' | 'unknown'."""
+_NEVER_SENSABLE_KW = (
+    "nap", "nsdr", "underwear", "scrotal", "sauna", "hot bath", "laptop",
+)
+_SLEEP_TIMING_KW = (
+    "lights out", "lights-out", "lights off", "bedtime", "in bed", "to bed",
+    "wind down", "wind-down", "asleep by", "sleep window", "sleep opportunity",
+)
+
+_CATEGORY_MAP = {
+    "movement": "movement", "exercise": "movement", "activity": "movement",
+    "cardio": "movement", "training": "movement",
+    "sleep": "sleep",
+    "supplement": "unsensable", "nutrition": "unsensable", "diet": "unsensable",
+    "heat": "unsensable", "light": "unsensable", "stress": "unsensable",
+    "fertility": "unsensable", "hydration": "unsensable",
+}
+
+
+def _classify(title: str, description: str, category: str = "") -> str:
+    """Return 'movement' | 'sleep' | 'unsensable' | 'unknown'.
+
+    The advisor's own declared Category wins when it is one we know: a
+    "Sleep" block that also says "take magnesium" is still verifiable by
+    the night's sleep (the keyword rule filed it as unsensable, so sleep
+    actions could never be credited). Keywords remain the fallback.
+    """
     blob = f"{title} {description}".lower()
+    # Content no sensor can verify, whatever label the advisor put on it: a
+    # nap never shows in the main-sleep record, and heat avoidance ("sleep
+    # without underwear", filed as Category: Sleep on 2026-09-21) is not
+    # measured by sleep duration.
+    if any(k in blob for k in _NEVER_SENSABLE_KW):
+        return "unsensable"
+    mapped = _CATEGORY_MAP.get((category or "").strip().lower().split()[0] if category else "")
+    if mapped == "sleep":
+        # Only a bedtime / lights-out block is verified by sleep duration.
+        return "sleep" if any(k in blob for k in _SLEEP_TIMING_KW) else "unsensable"
+    if mapped:
+        return mapped
     # Unsensable wins if present — we don't want to mis-credit a supplement
     # just because the description happens to mention 'walk'.
     if any(k in blob for k in _UNSENSABLE_KW):
@@ -172,15 +211,29 @@ def auto_credit_actions(config: SyncConfig, day: Optional[str] = None) -> Dict[s
         logger.info(f"auto_credit: no wearable payload for {day} yet")
         return result
     signals = _merge_activity(None, fitbit)
+    # A sleep action on `day` ("lights out 23:30 tonight") is fulfilled by the
+    # night that ENDS the next morning — stored in the NEXT day's file (sleep
+    # is attributed to its wake-up date). Grading it against `day`'s file
+    # judged it on the previous night. Absent next-day data → not sensable yet.
+    from datetime import timedelta as _td
+
+    next_day = (date.fromisoformat(day) + _td(days=1)).isoformat()
+    next_payload = _load_fitbit(config.data_dir, next_day) or {}
+    signals["sleep_hours"] = next_payload.get("sleep_hours") or 0
 
     for a in actions:
         if a.get("done"):
             continue  # already credited (manually or earlier auto pass)
         title = a.get("title", "")
         desc = a.get("description", "")
-        category = _classify(title, desc)
+        category = _classify(title, desc, a.get("category") or "")
 
         if category in ("unsensable", "unknown"):
+            result["unsensable"].append({"idx": a["idx"], "title": title})
+            continue
+
+        if category == "sleep" and not signals.get("sleep_hours"):
+            # Tonight hasn't happened / synced yet — neither credit nor fail.
             result["unsensable"].append({"idx": a["idx"], "title": title})
             continue
 

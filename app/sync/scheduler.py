@@ -498,6 +498,17 @@ def run_fitbit_sync() -> None:
     target = write_daily_json(config.data_dir, day.isoformat(), payload, source="fitbit")
     fresh = "fresh" if fitbit_data_is_fresh(payload) else "empty"
     print(f"Saved {target} via {label} ({fresh})")
+    # Yesterday's sleep actions are judged by LAST night, which lives in the
+    # file just saved — so only now can they be credited.
+    try:
+        from .auto_complete import auto_credit_actions
+
+        yday_iso = (day - timedelta(days=1)).isoformat()
+        summary = auto_credit_actions(config, yday_iso)
+        if summary.get("credited"):
+            print(f"Credited {len(summary['credited'])} action(s) for {yday_iso} from last night's sleep.")
+    except Exception as exc:
+        print(f"Yesterday sleep re-credit skipped: {exc}")
     # Sync succeeded — clear any stale auth-failure marker so a future
     # failure alerts again immediately.
     try:
@@ -568,6 +579,15 @@ def run_daily_advisor() -> None:
     from datetime import datetime
 
     config = load_config()
+    # Expire yesterday's (and older) tasks from the phone tracker before the
+    # new plan lands — independent of whether today's generation succeeds.
+    try:
+        from .sheets_tracker import archive_expired_actions
+
+        archive_expired_actions(config, datetime.now(tz=config.timezone).date().isoformat())
+    except Exception as exc:
+        print(f"Tracker expiry skipped: {exc}")
+
     from .daily_advisor import advisor_has_credentials
 
     if not advisor_has_credentials(config):

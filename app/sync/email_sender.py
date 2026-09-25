@@ -58,93 +58,97 @@ def _build_best_mover_html(config: SyncConfig, day: str) -> str:
 
 
 def _build_execution_dashboard_html(config: SyncConfig, day: str) -> str:
-    """Build a 7-day action execution dashboard for the email.
+    """7-day execution dashboard: what got done, missed, or simply not recorded.
 
-    Shows yesterday's and prior days' action completion as a visual table
-    with streaks and computed action effects.
+    Old behaviour hid the card after 7 days without a completion — exactly
+    when feedback matters — and painted every unticked task ❌, including
+    supplements no sensor can see. Now each past task is classified:
+
+      ✅ done       ticked in the Sheet/email, or auto-verified by the watch
+      ❌ missed     sensable (movement/sleep) and the watch shows it wasn't met
+      ⚪ unrecorded  not sensable (supplement, heat, light…) and never ticked
+      ⏳ open        today, window not yet passed
+
+    Expired tasks never show as open anywhere; today's list shows only what
+    is still doable.
     """
+    from datetime import datetime as _dt
+    from html import escape as _esc
+
+    from .action_lifecycle import action_state, enrich
     from .action_tracker import compute_streaks, load_action_history_with_sheets
+    from .auto_complete import _classify
 
     history = load_action_history_with_sheets(config, num_days=7)
     if not history:
         return ""
 
-    streaks = compute_streaks(config.data_dir)
-    any_streak = streaks.get("any_action", 0)
-    all_streak = streaks.get("all_actions", 0)
+    now = _dt.now(tz=config.timezone)
+    counts = {"auto": 0, "ticked": 0, "missed": 0, "unrecorded": 0, "open": 0}
+    chip_style = {
+        "done": ("#d1fae5", "#065f46", "&#x2705;"),
+        "missed": ("#fee2e2", "#991b1b", "&#x274C;"),
+        "unrecorded": ("#f3f4f6", "#6b7280", "&#x26AA;"),
+        "open": ("#fef3c7", "#92400e", "&#x23F3;"),
+    }
 
-    # Check if there is anything positive to show. If nothing completed in 7 days,
-    # hide the execution dashboard entirely (F8 — no guilt narrative).
-    any_recent_completions = any(
-        any(a.get("done") for a in rec.get("actions", []))
-        for rec in history
-    )
-    if not any_recent_completions and any_streak == 0:
-        return ""
-
-    # Streak badges (only when positive — never shame about zero)
-    streak_html = (
-        '<div style="margin-bottom:12px;font-size:14px;">'
-    )
-    if any_streak > 0:
-        streak_html += (
-            f'<span style="display:inline-block;padding:4px 10px;'
-            f'background:#fef3c7;border-radius:6px;margin-right:8px;">'
-            f'&#x1F525; {any_streak}-day streak</span>'
-        )
-    if all_streak > 0:
-        streak_html += (
-            f'<span style="display:inline-block;padding:4px 10px;'
-            f'background:#d1fae5;border-radius:6px;">'
-            f'&#x1F3AF; {all_streak}d perfect</span>'
-        )
-    streak_html += '</div>'
-
-    # History table rows
     rows = ""
     for record in history:
         d = record["date"]
-        actions = record.get("actions", [])
-        done_count = sum(1 for a in actions if a.get("done"))
-        total = len(actions)
-        rate = done_count / total if total else 0
-
-        # Status icons for each action
-        icons = ""
-        for a in actions:
-            if a.get("done"):
-                icons += (
-                    '<span style="display:inline-block;width:22px;height:22px;'
-                    'line-height:22px;text-align:center;background:#d1fae5;'
-                    'border-radius:4px;margin-right:3px;font-size:13px;">'
-                    '&#x2705;</span>'
-                )
+        chips = ""
+        for raw in record.get("actions", []):
+            act = enrich(dict(raw))
+            state = action_state(act, d, now)
+            if state == "done":
+                kind = "done"
+                counts["auto" if str(act.get("source", "")).endswith("_auto") else "ticked"] += 1
+            elif state == "open":
+                kind = "open"
+                counts["open"] += 1
             else:
-                icons += (
-                    '<span style="display:inline-block;width:22px;height:22px;'
-                    'line-height:22px;text-align:center;background:#fee2e2;'
-                    'border-radius:4px;margin-right:3px;font-size:13px;">'
-                    '&#x274C;</span>'
-                )
-
-        # Score color
-        if rate >= 1.0:
-            score_color = "#059669"
-        elif rate >= 0.5:
-            score_color = "#d97706"
-        else:
-            score_color = "#dc2626"
-
+                cat = _classify(act.get("title", ""), act.get("description", ""),
+                                act.get("category") or "")
+                kind = "missed" if cat in ("movement", "sleep") else "unrecorded"
+                counts[kind] += 1
+            bg, fg, icon = chip_style[kind]
+            title = act.get("title", "?")
+            short = title if len(title) <= 26 else title[:24].rstrip() + "…"
+            chips += (
+                f'<span style="display:inline-block;padding:2px 7px;margin:2px 4px 2px 0;'
+                f'background:{bg};color:{fg};border-radius:5px;font-size:12px;">'
+                f'{icon} {_esc(short)}</span>'
+            )
+        label = "Today" if d == now.date().isoformat() else d[5:]
         rows += (
-            f'<tr>'
-            f'<td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;'
-            f'font-size:13px;color:#6b7280;">{d}</td>'
-            f'<td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;">'
-            f'{icons}</td>'
-            f'<td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;'
-            f'text-align:center;font-weight:700;color:{score_color};'
-            f'font-size:14px;">{done_count}/{total}</td>'
-            f'</tr>'
+            '<tr>'
+            f'<td style="padding:5px 8px;border-bottom:1px solid #e5e7eb;font-size:12px;'
+            f'color:#6b7280;white-space:nowrap;vertical-align:top;">{label}</td>'
+            f'<td style="padding:5px 8px;border-bottom:1px solid #e5e7eb;">{chips}</td>'
+            '</tr>'
+        )
+
+    done_total = counts["auto"] + counts["ticked"]
+    summary = (
+        f'<b>{done_total}</b> done ({counts["auto"]} auto-verified, {counts["ticked"]} ticked)'
+        f' · <b>{counts["missed"]}</b> missed'
+        f' · <b>{counts["unrecorded"]}</b> not recorded'
+    )
+    hint = ""
+    if counts["unrecorded"] > done_total:
+        hint = (
+            '<div style="font-size:12px;color:#6b7280;margin-top:6px;">'
+            '&#x26AA; = the watch can&rsquo;t see it (supplements, heat, light). '
+            'One tick in the tracker turns it into real adherence data for the '
+            '&ldquo;what moved your metrics&rdquo; analysis.</div>'
+        )
+
+    streaks = compute_streaks(config.data_dir)
+    streak_html = ""
+    if streaks.get("any_action", 0) > 0:
+        streak_html = (
+            f'<span style="display:inline-block;padding:3px 9px;background:#fef3c7;'
+            f'border-radius:6px;margin-left:8px;font-size:12px;">'
+            f'&#x1F525; {streaks["any_action"]}-day streak</span>'
         )
 
     # Action effects section
@@ -182,21 +186,14 @@ def _build_execution_dashboard_html(config: SyncConfig, day: str) -> str:
     html = (
         '<div style="margin-top:28px;padding:16px 20px;background:#eff6ff;'
         'border-radius:12px;border:1px solid #bfdbfe;">'
-        '<h3 style="color:#1e40af;margin:0 0 10px 0;font-size:16px;">'
-        '&#x1F4CA; Execution Dashboard</h3>'
-        f'{streak_html}'
+        '<h3 style="color:#1e40af;margin:0 0 6px 0;font-size:16px;">'
+        f'&#x1F4CA; Execution Dashboard{streak_html}</h3>'
+        f'<div style="font-size:13px;color:#374151;margin-bottom:10px;">Last 7 days: {summary}</div>'
         '<table cellspacing="0" cellpadding="0" border="0" '
         'style="width:100%;border-collapse:collapse;">'
-        '<tr style="background:#f1f5f9;">'
-        '<th style="padding:6px 10px;text-align:left;font-size:12px;'
-        'color:#64748b;border-bottom:2px solid #cbd5e1;">Date</th>'
-        '<th style="padding:6px 10px;text-align:left;font-size:12px;'
-        'color:#64748b;border-bottom:2px solid #cbd5e1;">Actions</th>'
-        '<th style="padding:6px 10px;text-align:center;font-size:12px;'
-        'color:#64748b;border-bottom:2px solid #cbd5e1;">Score</th>'
-        '</tr>'
         f'{rows}'
         '</table>'
+        f'{hint}'
         f'{effects_html}'
         '</div>'
     )
