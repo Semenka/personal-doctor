@@ -459,7 +459,13 @@ def send_whatsapp_advice(config: SyncConfig, advice: Dict[str, Any]) -> bool:
             )
         if "Pebble" in what:
             fixes.append("Pebble app → Settings → Health → Sync to Health Connect")
-        line = f"⚠️ {what} (phone steps only, no sleep/HRV)"
+        if silent_days:
+            # Every watch is quiet: sleep/HRV really are missing.
+            line = f"⚠️ {what} (phone steps only, no sleep/HRV)"
+        else:
+            # One watch is quiet, another reported — 2026-09-26 said "no
+            # sleep/HRV" above a footer showing sleep 8.6h and HRV 20.
+            line = f"ℹ️ {what} — the other watch is reporting"
         if fixes:
             line += " — " + "; ".join(fixes)
         lines.insert(1, line)
