@@ -123,6 +123,27 @@ def test_whatsapp_digest_carries_watch_silent_line(monkeypatch, tmp_path):
     assert "google_health_api_auth" in lines[1] and "Sync to Health Connect" in lines[1]
 
 
+def test_whatsapp_digest_partial_silence_does_not_claim_missing_sleep(monkeypatch, tmp_path):
+    # 2026-09-26: only the Pebble was quiet; the digest said "no sleep/HRV"
+    # above a footer showing the Fitbit Air's sleep 8.6h and HRV 20.
+    from app.sync import whatsapp_sender as ws
+
+    sent = {}
+    monkeypatch.setattr(ws, "_run_openclaw_send", lambda msg, target=None: (sent.setdefault("msg", msg), True)[1])
+    monkeypatch.setattr(ws, "_completion_footer", lambda cfg: "✅ footer")
+    monkeypatch.setattr(ws, "_yesterday_activity_line", lambda cfg, day: "")
+    cfg = types.SimpleNamespace(data_dir=tmp_path, email_to="", smtp_host="")
+    advice = {
+        "date": "2026-09-26", "model": "gemini",
+        "advice": "1. **Walk** — after lunch",
+        "context_summary": {"watch_devices": "Pebble silent 3d"},
+    }
+    assert ws.send_whatsapp_advice(cfg, advice) is True
+    line = sent["msg"].splitlines()[1]
+    assert line.startswith("ℹ️ Pebble silent 3d — the other watch is reporting")
+    assert "no sleep/HRV" not in line and "Sync to Health Connect" in line
+
+
 def test_whatsapp_digest_has_no_watch_line_when_watch_reports(monkeypatch, tmp_path):
     from app.sync import whatsapp_sender as ws
 
