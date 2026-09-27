@@ -253,12 +253,15 @@ def create_app() -> FastAPI:
             compute_metric_trends,
             compute_rolling_averages,
             load_primary_wearable_history,
+            settle_running_day,
         )
 
         today = datetime.now(tz=config.timezone).date()
         history = load_action_history_with_sheets(config, num_days=7)
         streaks = compute_streaks(config.data_dir)
-        fitbit_history = load_primary_wearable_history(config.data_dir, today)
+        fitbit_history = settle_running_day(
+            load_primary_wearable_history(config.data_dir, today), today.isoformat()
+        )
         averages = compute_rolling_averages(fitbit_history)
         trends = compute_metric_trends(fitbit_history)
 
