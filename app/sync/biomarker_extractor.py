@@ -20,9 +20,16 @@ import re
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from .biomarkers import ALIAS_INDEX, BY_ID, REGISTRY, Biomarker, find_by_alias
+from .biomarkers import (
+    ALIAS_INDEX,
+    BY_ID,
+    REGISTRY,
+    Biomarker,
+    find_by_alias,
+    normalize_unit,
+)
 from .config import SyncConfig
 
 logger = logging.getLogger("personal-doctor.biomarker_extractor")
@@ -68,11 +75,34 @@ def load_all_readings(config: SyncConfig) -> List[Dict[str, Any]]:
         if not line:
             continue
         try:
-            out.append(json.loads(line))
+            out.append(_canonical_row(json.loads(line)))
         except Exception:
             continue
     out.sort(key=lambda r: (r.get("date", ""), r.get("biomarker_id", "")))
     return out
+
+
+def _canonical_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Bring a stored reading to its canonical unit (readings saved before the
+    extractor normalized units are still in whatever the lab printed)."""
+    bid = row.get("biomarker_id")
+    marker = BY_ID.get(bid or "")
+    try:
+        value = float(row.get("value"))
+    except (TypeError, ValueError):
+        return row
+    if marker is None:
+        return row
+    new_value, unit, ref_low, ref_high = _to_canonical(
+        bid, value, row.get("unit") or "", row.get("ref_low"), row.get("ref_high")
+    )
+    if new_value == value and unit == row.get("unit"):
+        return row
+    converted = new_value != value
+    row = dict(row, value=new_value, unit=unit, ref_low=ref_low, ref_high=ref_high)
+    if converted:
+        row["flagged"] = _flag_value(marker, new_value)
+    return row
 
 
 def save_readings(
@@ -191,6 +221,30 @@ def _within_sanity(marker_id: str, value: float) -> bool:
     if floor is not None and value < floor:
         return False
     return True
+
+
+def _to_canonical(
+    marker_id: str, value: float, unit: str,
+    ref_low: Any = None, ref_high: Any = None,
+) -> Tuple[float, str, Any, Any]:
+    """Rescale a reading (and its printed reference range) to the canonical unit.
+
+    If the rescaled value is implausible but the raw one is not, the unit label
+    was the error (e.g. "µmol/L" printed beside a µg/dL zinc value), so the
+    reading is kept as-is rather than inflated 6.5×.
+    """
+    new_value, new_unit, converted = normalize_unit(marker_id, value, unit)
+    if not converted:
+        return new_value, new_unit, ref_low, ref_high
+    if not _within_sanity(marker_id, new_value) and _within_sanity(marker_id, value):
+        return value, unit, ref_low, ref_high
+
+    def _ref(v: Any) -> Any:
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return normalize_unit(marker_id, float(v), unit)[0]
+        return v
+
+    return new_value, new_unit, _ref(ref_low), _ref(ref_high)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -332,12 +386,13 @@ def extract_biomarkers_via_gemini(
         except (TypeError, ValueError):
             continue
         marker = BY_ID[bid]
+        unit = (r.get("unit") or marker.unit or "").strip()
+        value, unit, ref_low, ref_high = _to_canonical(
+            bid, value, unit, r.get("ref_low"), r.get("ref_high")
+        )
         if not _within_sanity(bid, value):
             logger.info(f"  drop sanity-fail {bid}={value} from {source_file}")
             continue
-        unit = (r.get("unit") or marker.unit or "").strip()
-        ref_low = r.get("ref_low")
-        ref_high = r.get("ref_high")
         out.append(
             BiomarkerReading(
                 biomarker_id=bid,
@@ -407,6 +462,7 @@ def extract_biomarkers_heuristic(
             value = float(val_str.replace(",", "."))
         except ValueError:
             continue
+        value, unit, _, _ = _to_canonical(marker.id, value, unit.strip() or marker.unit)
         if not _within_sanity(marker.id, value):
             continue
         seen.add(marker.id)
@@ -414,7 +470,7 @@ def extract_biomarkers_heuristic(
             BiomarkerReading(
                 biomarker_id=marker.id,
                 value=value,
-                unit=unit.strip() or marker.unit,
+                unit=unit,
                 date=when,
                 source_kind=source_kind,
                 source_file=source_file,
@@ -545,12 +601,13 @@ def extract_biomarkers_via_vision(
         except (TypeError, ValueError):
             continue
         marker = BY_ID[bid]
+        unit = (r.get("unit") or marker.unit or "").strip()
+        value, unit, ref_low, ref_high = _to_canonical(
+            bid, value, unit, r.get("ref_low"), r.get("ref_high")
+        )
         if not _within_sanity(bid, value):
             logger.info(f"  drop sanity-fail {bid}={value} from {source_file}")
             continue
-        unit = (r.get("unit") or marker.unit or "").strip()
-        ref_low = r.get("ref_low")
-        ref_high = r.get("ref_high")
         out.append(
             BiomarkerReading(
                 biomarker_id=bid, value=value, unit=unit,

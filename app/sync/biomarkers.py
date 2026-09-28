@@ -475,6 +475,67 @@ for _b in REGISTRY:
         ALIAS_INDEX[_name.strip().lower()] = _b.id
 
 
+# Factors from units French/SI lab reports print to each marker's canonical
+# unit (value_canonical = value_reported * factor). The extractor prompt keeps
+# "the unit as printed", so without this zinc 15 µmol/L (≈ 98 µg/dL) and a
+# later 96 µg/dL showed as "Zinc 15→96 (+540%)" in the 2026-09-28 digest, and
+# testosterone in nmol/L fell under its ng/dL sanity floor and was dropped.
+_UNIT_FACTORS: Dict[str, Dict[str, float]] = {
+    "testosterone_total": {"nmol/l": 28.84, "ng/ml": 100.0},
+    "testosterone_free": {"pmol/l": 0.2884, "nmol/l": 288.4, "ng/dl": 10.0},
+    "dihydrotestosterone": {"nmol/l": 290.4, "pmol/l": 0.2904, "ng/ml": 1000.0},
+    "estradiol": {"pmol/l": 0.2724, "ng/l": 1.0},
+    "prolactin": {"miu/l": 0.04717, "ug/l": 1.0},
+    "17oh_progesterone": {"ng/ml": 3.026},
+    "lh": {"iu/l": 1.0},
+    "fsh": {"iu/l": 1.0},
+    "glucose_fasting": {"mmol/l": 18.016, "g/l": 100.0},
+    "insulin_fasting": {"miu/l": 1.0, "pmol/l": 0.144},
+    "ldl": {"mmol/l": 38.67, "g/l": 100.0},
+    "hdl": {"mmol/l": 38.67, "g/l": 100.0},
+    "triglycerides": {"mmol/l": 88.57, "g/l": 100.0},
+    "apob": {"g/l": 100.0},
+    "crp_hs": {"mg/dl": 10.0},
+    "hemoglobin": {"g/l": 0.1, "mmol/l": 1.611},
+    "hematocrit": {"l/l": 100.0},
+    "ferritin": {"ug/l": 1.0},
+    "creatinine": {"umol/l": 0.01131},
+    "vitamin_d_25oh": {"nmol/l": 0.4006},
+    "vitamin_b12": {"pmol/l": 1.355, "ng/l": 1.0},
+    "folate": {"nmol/l": 0.4413, "ug/l": 1.0},
+    "zinc": {"umol/l": 6.54, "mg/l": 100.0, "ug/l": 0.1},
+    "tsh": {"miu/l": 1.0},
+    "ft4": {"pmol/l": 0.0777},
+    "psa_total": {"ug/l": 1.0},
+}
+
+
+def _unit_key(unit: str) -> str:
+    """'µmol/L', 'μmol / l', 'umol/L' → 'umol/l'; French 'UI' → 'iu'."""
+    u = (unit or "").strip().lower().replace(" ", "")
+    for a, b in (("µ", "u"), ("μ", "u"), ("mcg", "ug"), ("ui", "iu")):
+        u = u.replace(a, b)
+    return u
+
+
+def normalize_unit(marker_id: str, value: float, unit: str) -> Tuple[float, str, bool]:
+    """Convert a reading to its marker's canonical unit.
+
+    Returns (value, unit, converted). Unknown or already-canonical units are
+    returned unchanged, so a reading is never silently rescaled on a guess.
+    """
+    marker = BY_ID.get(marker_id)
+    if marker is None or not unit:
+        return value, unit, False
+    key = _unit_key(unit)
+    if key == _unit_key(marker.unit):
+        return value, marker.unit, False
+    factor = _UNIT_FACTORS.get(marker_id, {}).get(key)
+    if factor is None:
+        return value, unit, False
+    return round(value * factor, 4), marker.unit, factor != 1.0
+
+
 def find_by_alias(label: str) -> Optional[Biomarker]:
     """Match a free-form label (e.g. 'Testostérone totale') to a canonical biomarker.
 
