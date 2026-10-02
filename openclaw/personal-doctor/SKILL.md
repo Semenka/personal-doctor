@@ -111,8 +111,10 @@ Always report the command's own output back to the user (the sync jobs print
 
 Action completion is credited passively from the watch data (07:42 and
 21:00): movement / walk actions when steps ≥ 7000 or active minutes ≥ 25,
-sleep actions when sleep ≥ 6.75 h. Everything else is ticked in the tracker
-Google Sheet linked from every digest. WhatsApp replies are **not** routed to
+sleep actions when sleep ≥ 6.75 h. Everything else is ticked with the
+checkbox buttons under the Telegram digest (one per recommended action; a tap
+updates the local record and the tracker Sheet), or in the tracker Google Sheet
+when the app's Telegram bot is not configured. WhatsApp replies are **not** routed to
 this app unless the channel is bound to the `personal-doctor` agent:
 
 ```bash
@@ -122,22 +124,36 @@ openclaw agents bind --agent main --bind whatsapp:default              # revert
 
 ## Delivery reliability
 
-`whatsapp_sender` retries, kick-starts the OpenClaw gateway on
-"outbound not configured" / "no listener" errors (time-throttled), falls back
-to Telegram (`TELEGRAM_TARGET`), then to email — the morning plan is never
-silently dropped.
+Every phone message goes first to the app's own Telegram bot
+(`TELEGRAM_BOT_TOKEN`), which does not depend on the OpenClaw gateway. If that
+fails, `whatsapp_sender` tries WhatsApp: it retries, kick-starts the OpenClaw
+gateway on "outbound not configured" / "no listener" errors (time-throttled),
+and falls back to OpenClaw's Telegram channel (`TELEGRAM_TARGET`). The full plan
+is emailed only when no chat channel delivered the digest (`DAILY_EMAIL`), so
+the morning plan is never silently dropped.
+
+Telegram bot setup (one time):
+1. In Telegram, message @BotFather → `/newbot` → copy the token. Make a new bot
+   for this app; don't reuse OpenClaw's, because two pollers on one token both fail.
+2. Add `TELEGRAM_BOT_TOKEN=<token>` to `~/personal-doctor/.env`, restart the
+   service, and send `/start` to the new bot. It replies with your chat id.
+   Add `TELEGRAM_CHAT_ID=<id>` (not needed if `TELEGRAM_TARGET` is already
+   your numeric id), then restart again.
+3. Check with `python -m app.sync.telegram_bot`, which sends a test message.
 
 ## Environment (`~/personal-doctor/.env`)
 
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `GOOGLE_API_KEY` | Yes | Gemini key for the advisor |
-| `EMAIL_TO`, `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD` | Yes | Digest delivery |
+| `EMAIL_TO`, `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD` | Yes | Fallback plan email + Sunday reports |
 | `GDRIVE_CREDENTIALS_DIR` | Yes | Google OAuth client (`credentials.json`); also used by the Google Health transports |
 | `OURA_ACCESS_TOKEN` | No | Enables the sporadic ring sweep |
 | `FITBIT_CLIENT_ID` / `FITBIT_CLIENT_SECRET` | No | Legacy Fitbit Web API fallback |
 | `HEALTH_TIMEZONE` | No | Default Europe/Paris |
-| `WHATSAPP_TARGET`, `TELEGRAM_TARGET` | No | Delivery targets |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | No | The app's own Telegram bot: digest + action checkboxes |
+| `DAILY_EMAIL` | No | `fallback` (default: email the plan only if the phone digest failed), `always`, `never` |
+| `WHATSAPP_TARGET`, `TELEGRAM_TARGET` | No | OpenClaw delivery targets (fallback) |
 
 ## Service management
 

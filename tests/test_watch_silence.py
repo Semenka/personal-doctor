@@ -106,7 +106,7 @@ def test_whatsapp_digest_carries_watch_silent_line(monkeypatch, tmp_path):
     from app.sync import whatsapp_sender as ws
 
     sent = {}
-    monkeypatch.setattr(ws, "_run_openclaw_send", lambda msg, target=None: (sent.setdefault("msg", msg), True)[1])
+    monkeypatch.setattr(ws, "_run_openclaw_send", lambda msg, target=None, **_: (sent.setdefault("msg", msg), True)[1])
     monkeypatch.setattr(ws, "_completion_footer", lambda cfg: "✅ footer")
     monkeypatch.setattr(ws, "_yesterday_activity_line", lambda cfg, day: "")
     cfg = types.SimpleNamespace(data_dir=tmp_path, email_to="", smtp_host="")
@@ -129,7 +129,7 @@ def test_whatsapp_digest_partial_silence_does_not_claim_missing_sleep(monkeypatc
     from app.sync import whatsapp_sender as ws
 
     sent = {}
-    monkeypatch.setattr(ws, "_run_openclaw_send", lambda msg, target=None: (sent.setdefault("msg", msg), True)[1])
+    monkeypatch.setattr(ws, "_run_openclaw_send", lambda msg, target=None, **_: (sent.setdefault("msg", msg), True)[1])
     monkeypatch.setattr(ws, "_completion_footer", lambda cfg: "✅ footer")
     monkeypatch.setattr(ws, "_yesterday_activity_line", lambda cfg, day: "")
     cfg = types.SimpleNamespace(data_dir=tmp_path, email_to="", smtp_host="")
@@ -148,7 +148,7 @@ def test_whatsapp_digest_has_no_watch_line_when_watch_reports(monkeypatch, tmp_p
     from app.sync import whatsapp_sender as ws
 
     sent = {}
-    monkeypatch.setattr(ws, "_run_openclaw_send", lambda msg, target=None: (sent.setdefault("msg", msg), True)[1])
+    monkeypatch.setattr(ws, "_run_openclaw_send", lambda msg, target=None, **_: (sent.setdefault("msg", msg), True)[1])
     monkeypatch.setattr(ws, "_completion_footer", lambda cfg: "✅ footer")
     monkeypatch.setattr(ws, "_yesterday_activity_line", lambda cfg, day: "")
     cfg = types.SimpleNamespace(data_dir=tmp_path, email_to="", smtp_host="")

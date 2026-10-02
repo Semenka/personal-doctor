@@ -1,4 +1,5 @@
-"""Send daily health summaries via WhatsApp using the local OpenClaw gateway.
+"""Send daily health summaries to the phone: the app's Telegram bot first
+(see ``telegram_bot``), then WhatsApp/Telegram via the local OpenClaw gateway.
 
 OpenClaw runs at 127.0.0.1:18789 with a WhatsApp channel already linked to the
 user's number. We shell out to `openclaw message send` rather than reimplementing
@@ -162,10 +163,17 @@ def _kickstart_gateway() -> None:
         logger.warning(f"gateway kickstart failed: {exc}")
 
 
-def _run_openclaw_send(message: str, target: str = DEFAULT_TARGET) -> bool:
+def _run_openclaw_send(
+    message: str,
+    target: str = DEFAULT_TARGET,
+    reply_markup: Optional[Dict[str, Any]] = None,
+) -> bool:
     """Deliver a message with retry, gateway self-heal, and channel fallback.
 
     Order of attempts:
+      0. The app's own Telegram bot (``TELEGRAM_BOT_TOKEN``), when configured —
+         independent of the OpenClaw gateway, and the only channel that can
+         carry ``reply_markup`` (the action checkboxes).
       1. WhatsApp send.
       2. If it failed with a gateway-handler signature, kickstart the gateway
          once (per process) and retry WhatsApp.
@@ -177,6 +185,13 @@ def _run_openclaw_send(message: str, target: str = DEFAULT_TARGET) -> bool:
 
     if not message.strip():
         return False
+    if target == DEFAULT_TARGET:
+        from . import telegram_bot
+
+        if telegram_bot.configured():
+            if telegram_bot.send_message(message, reply_markup):
+                return True
+            logger.warning("Telegram bot send failed — trying OpenClaw channels.")
     if len(message) > _MAX_MESSAGE_CHARS:
         message = message[: _MAX_MESSAGE_CHARS - 3] + "..."
 
@@ -208,6 +223,14 @@ def _run_openclaw_send(message: str, target: str = DEFAULT_TARGET) -> bool:
         logger.warning(f"Telegram fallback failed: {tg_err}")
 
     return False
+
+
+def daily_email_mode() -> str:
+    """``DAILY_EMAIL``: "fallback" (default) mails the daily plan only when no
+    chat channel delivered the digest; "always" restores the daily email;
+    "never" turns it off entirely."""
+    mode = os.getenv("DAILY_EMAIL", "fallback").strip().lower()
+    return mode if mode in ("fallback", "always", "never") else "fallback"
 
 
 def send_via_email_fallback(config: SyncConfig, subject: str, body: str) -> bool:
@@ -390,8 +413,14 @@ def _completion_footer(config: SyncConfig) -> str:
     return "✅ Mark actions done via the buttons in today's email."
 
 
-def send_whatsapp_advice(config: SyncConfig, advice: Dict[str, Any]) -> bool:
-    """Send the morning 8 AM digest to WhatsApp.
+def send_whatsapp_advice(
+    config: SyncConfig, advice: Dict[str, Any], email_fallback: bool = False
+) -> bool:
+    """Send the morning 8 AM digest to the phone (Telegram bot, else OpenClaw).
+
+    Returns True if a chat channel took it. Email is the caller's call
+    (``daily_email_mode``): the scheduler mails the full plan instead when this
+    returns False, so a failed morning never produces two emails.
 
     Message shape:
         🩺 Daily Plan — YYYY-MM-DD
@@ -489,18 +518,28 @@ def send_whatsapp_advice(config: SyncConfig, advice: Dict[str, Any]) -> bool:
     except Exception as exc:
         logger.warning(f"biomarker WhatsApp summary failed: {exc}")
 
-    # Protocol (today's actions) with green/red completion status.
+    # Protocol (today's actions). On the app's Telegram bot each action is a
+    # checkbox button under the message, so the text list would only repeat it.
+    from . import telegram_bot
+
+    actions: List[Dict[str, Any]] = []
     try:
         from .action_tracker import load_actions_with_sheets
-        from .biomarker_dashboard import render_whatsapp_protocol
 
         actions = load_actions_with_sheets(config, day)
-        proto = render_whatsapp_protocol(actions, day=day)
-        if proto:
-            lines.append("")
-            lines.append(proto)
     except Exception as exc:
-        logger.warning(f"protocol WhatsApp block failed: {exc}")
+        logger.warning(f"loading today's actions failed: {exc}")
+    keyboard = telegram_bot.action_keyboard(day, actions) if telegram_bot.configured() else None
+    if not keyboard:
+        try:
+            from .biomarker_dashboard import render_whatsapp_protocol
+
+            proto = render_whatsapp_protocol(actions, day=day)
+            if proto:
+                lines.append("")
+                lines.append(proto)
+        except Exception as exc:
+            logger.warning(f"protocol WhatsApp block failed: {exc}")
 
     # Recent papers — green/red impact-coded.
     try:
@@ -536,17 +575,16 @@ def send_whatsapp_advice(config: SyncConfig, advice: Dict[str, Any]) -> bool:
     # only /whatsapp/inbound hits ever were a local test on 2026-04-18). Point
     # at the tracker Sheet, which works from the phone with one tap.
     lines.append("")
-    lines.append(_completion_footer(config))
+    if keyboard:
+        lines.append("✅ Tap an action below when it's done.")
+    else:
+        lines.append(_completion_footer(config))
 
     message = "\n".join(lines)
-    ok = _run_openclaw_send(message)
+    ok = _run_openclaw_send(message, reply_markup=keyboard)
     if ok:
-        logger.info(f"Sent WhatsApp advice for {day}")
-    else:
-        # Hard guarantee: the morning plan must reach the user somehow. The
-        # full plan also goes out by email separately, but this short-form
-        # fallback ensures the WhatsApp digest content isn't lost when both
-        # WhatsApp and Telegram are down.
+        logger.info(f"Sent phone digest for {day}")
+    elif email_fallback:
         if send_via_email_fallback(config, f"🩺 Daily Plan — {day}", message):
             logger.info(f"Morning digest delivered via email fallback for {day}")
     return ok
@@ -582,12 +620,18 @@ def send_whatsapp_evening_nudge(
         due = f" — by {a['due_end']}" if a.get("due_end") else ""
         lines.append(f"{i}. {a.get('title', '?')}{due}")
     lines.append("")
-    lines.append(
-        "Want to knock one out tonight? " + _completion_footer(config)
-    )
+    from . import telegram_bot
+
+    keyboard = telegram_bot.action_keyboard(day, top) if telegram_bot.configured() else None
+    if keyboard:
+        lines.append("Want to knock one out tonight? Tap it below when done.")
+    else:
+        lines.append(
+            "Want to knock one out tonight? " + _completion_footer(config)
+        )
 
     message = "\n".join(lines)
-    ok = _run_openclaw_send(message)
+    ok = _run_openclaw_send(message, reply_markup=keyboard)
     if ok:
         logger.info(f"Sent evening nudge for {day} ({len(top)} open)")
     return ok

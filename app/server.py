@@ -386,6 +386,14 @@ def start_server():
                       id="health_os_brief", misfire_grace_time=7200)
     scheduler.start()
 
+    # Action checkboxes in the Telegram digest need someone listening for taps.
+    try:
+        from app.sync.telegram_bot import start_poller
+
+        start_poller(config)
+    except Exception as exc:
+        print(f"Telegram poller not started: {exc}")
+
     # Boot-time self-check: log loud warnings if WhatsApp delivery or Fitbit Air
     # data are broken. Easier than digging through logs after a regression.
     def _self_check() -> None:
