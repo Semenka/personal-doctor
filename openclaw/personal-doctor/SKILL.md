@@ -132,14 +132,20 @@ and falls back to OpenClaw's Telegram channel (`TELEGRAM_TARGET`). The full plan
 is emailed only when no chat channel delivered the digest (`DAILY_EMAIL`), so
 the morning plan is never silently dropped.
 
-Telegram bot setup (one time):
-1. In Telegram, message @BotFather → `/newbot` → copy the token. Make a new bot
-   for this app; don't reuse OpenClaw's, because two pollers on one token both fail.
+Telegram bot setup (one time). The app's bot is **@Cosmo_Ale_bot**
+(`TELEGRAM_BOT_USERNAME` overrides it); at startup the token is checked
+against that name.
+1. Get the bot's token from @BotFather: `/mybots` → @Cosmo_Ale_bot → API Token.
 2. Add `TELEGRAM_BOT_TOKEN=<token>` to `~/personal-doctor/.env`, restart the
-   service, and send `/start` to the new bot. It replies with your chat id.
+   service, and send `/start` to @Cosmo_Ale_bot. It replies with your chat id.
    Add `TELEGRAM_CHAT_ID=<id>` (not needed if `TELEGRAM_TARGET` is already
    your numeric id), then restart again.
-3. Check with `python -m app.sync.telegram_bot`, which sends a test message.
+3. Check with `python -m app.sync.telegram_bot`. It confirms the bot name, sends
+   a test message, and reports whether button taps are being received.
+4. Only one program can read a bot's updates. If something else (an OpenClaw
+   Telegram channel, another agent) also uses @Cosmo_Ale_bot, digests still
+   arrive but checkbox taps don't. The check and the log report Telegram 409
+   when that happens. Remove the bot from the other program to fix it.
 
 ## Environment (`~/personal-doctor/.env`)
 
@@ -151,7 +157,7 @@ Telegram bot setup (one time):
 | `OURA_ACCESS_TOKEN` | No | Enables the sporadic ring sweep |
 | `FITBIT_CLIENT_ID` / `FITBIT_CLIENT_SECRET` | No | Legacy Fitbit Web API fallback |
 | `HEALTH_TIMEZONE` | No | Default Europe/Paris |
-| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | No | The app's own Telegram bot: digest + action checkboxes |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | No | The app's Telegram bot (@Cosmo_Ale_bot): digest + action checkboxes |
 | `DAILY_EMAIL` | No | `fallback` (default: email the plan only if the phone digest failed), `always`, `never` |
 | `WHATSAPP_TARGET`, `TELEGRAM_TARGET` | No | OpenClaw delivery targets (fallback) |
 

@@ -147,3 +147,28 @@ def test_long_digest_splits_and_keeps_buttons_on_the_last_part(monkeypatch):
     sends = [p for m, p in calls if m == "sendMessage"]
     assert len(sends) == 2 and all(len(p["text"]) <= 4096 for p in sends)
     assert "reply_markup" not in sends[0] and "reply_markup" in sends[1]
+
+
+def test_token_is_checked_against_cosmo_ale_bot(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:abc")
+    monkeypatch.delenv("TELEGRAM_BOT_USERNAME", raising=False)
+    monkeypatch.setattr(telegram_bot, "_call", lambda m, p, timeout=20: {"username": "Cosmo_Ale_bot"})
+    assert telegram_bot.verify_bot()["ok"] is True
+    monkeypatch.setattr(telegram_bot, "_call", lambda m, p, timeout=20: {"username": "SomeOtherBot"})
+    check = telegram_bot.verify_bot()
+    assert check["ok"] is False and check["expected"] == "Cosmo_Ale_bot"
+
+
+def test_conflict_is_remembered_and_reported(monkeypatch, tmp_path):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:abc")
+
+    class _Resp:
+        def json(self):
+            return {"ok": False, "error_code": 409,
+                    "description": "Conflict: terminated by other getUpdates request"}
+
+    monkeypatch.setattr(telegram_bot.requests, "post", lambda *a, **k: _Resp())
+    assert telegram_bot.poll_once(types.SimpleNamespace(data_dir=tmp_path), timeout_s=0) is False
+    assert telegram_bot._last_error_code == 409
+    telegram_bot._write_status(tmp_path, False, 409)
+    assert telegram_bot.read_status(tmp_path)["error_code"] == 409

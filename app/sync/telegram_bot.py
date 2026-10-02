@@ -41,6 +41,19 @@ _MAX_TAP_AGE_DAYS = 2
 _CALLBACK_RE = re.compile(r"^([du]):(\d{4}-\d{2}-\d{2}):(\d{1,3})$")
 
 
+# The bot the user picked for this app (2026-10-02). Checked against getMe so
+# a token from some other bot is caught at startup instead of messaging the
+# wrong chat. TELEGRAM_BOT_USERNAME overrides it.
+DEFAULT_BOT_USERNAME = "Cosmo_Ale_bot"
+
+# Bot API error code of the last failed call (409 = another poller owns the bot).
+_last_error_code: Optional[int] = None
+
+
+def expected_username() -> str:
+    return os.getenv("TELEGRAM_BOT_USERNAME", DEFAULT_BOT_USERNAME).strip().lstrip("@")
+
+
 def bot_token() -> str:
     return os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 
@@ -61,9 +74,11 @@ def configured() -> bool:
 
 def _call(method: str, payload: Dict[str, Any], timeout: float = 20) -> Optional[Dict[str, Any]]:
     """POST one Bot API method. Returns ``result`` or None; never raises, never logs the token."""
+    global _last_error_code
     token = bot_token()
     if not token:
         return None
+    _last_error_code = None
     try:
         resp = requests.post(
             _API.format(token=token, method=method), json=payload, timeout=timeout
@@ -73,11 +88,24 @@ def _call(method: str, payload: Dict[str, Any], timeout: float = 20) -> Optional
         logger.warning(f"Telegram {method} failed: {type(exc).__name__}")
         return None
     if not body.get("ok"):
+        _last_error_code = body.get("error_code")
         logger.warning(
             f"Telegram {method} rejected: {body.get('error_code')} {body.get('description', '')[:200]}"
         )
         return None
     return body.get("result")
+
+
+def verify_bot() -> Dict[str, Any]:
+    """getMe, compared with the expected bot: {"ok", "username", "expected"}."""
+    me = _call("getMe", {}) or {}
+    username = str(me.get("username") or "")
+    expected = expected_username()
+    return {
+        "ok": bool(username) and username.lower() == expected.lower(),
+        "username": username,
+        "expected": expected,
+    }
 
 
 # ─── Outbound ──────────────────────────────────────────────────────────────
@@ -241,6 +269,29 @@ def poll_once(config: Any, timeout_s: int = 50) -> bool:
     return True
 
 
+def _status_path(data_dir: Path) -> Path:
+    return data_dir / "telegram_status.json"
+
+
+def _write_status(data_dir: Path, ok: bool, error_code: Optional[int]) -> None:
+    from datetime import datetime, timezone
+
+    try:
+        _status_path(data_dir).write_text(json.dumps({
+            "polling_ok": ok, "error_code": error_code,
+            "since": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }))
+    except Exception:
+        pass
+
+
+def read_status(data_dir: Path) -> Dict[str, Any]:
+    try:
+        return json.loads(_status_path(data_dir).read_text())
+    except Exception:
+        return {}
+
+
 _poller_started = False
 
 
@@ -251,15 +302,37 @@ def start_poller(config: Any) -> bool:
         return False
     _poller_started = True
 
+    check = verify_bot()
+    if check["username"] and not check["ok"]:
+        logger.warning(
+            f"TELEGRAM_BOT_TOKEN belongs to @{check['username']}, not "
+            f"@{check['expected']} — digests will come from @{check['username']}."
+        )
+
     def _loop() -> None:
         backoff = 5
+        last_conflict_log = 0.0
+        last_state: Optional[str] = None
         while True:
-            if poll_once(config):
+            ok = poll_once(config)
+            state = "ok" if ok else f"error {_last_error_code}"
+            if state != last_state:
+                _write_status(config.data_dir, ok, _last_error_code)
+                last_state = state
+            if ok:
                 backoff = 5
-            else:
-                # 409 = another poller holds this token (e.g. OpenClaw's bot).
-                time.sleep(backoff)
-                backoff = min(backoff * 2, 300)
+                continue
+            if _last_error_code == 409 and time.time() - last_conflict_log > 3600:
+                # Sending still works; only taps are lost. Usually OpenClaw (or
+                # another agent) is polling the same bot.
+                logger.error(
+                    f"Another program is reading updates for @{expected_username()} "
+                    "(Telegram 409), so action-checkbox taps can't reach this app. "
+                    "Remove the bot from that program, or give this app its own bot."
+                )
+                last_conflict_log = time.time()
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 300)
 
     threading.Thread(target=_loop, name="telegram-poller", daemon=True).start()
     logger.info("Telegram poller started.")
@@ -267,10 +340,24 @@ def start_poller(config: Any) -> bool:
 
 
 if __name__ == "__main__":  # python -m app.sync.telegram_bot — setup check
-    me = _call("getMe", {})
-    if not me:
+    check = verify_bot()
+    if not check["username"]:
         print("TELEGRAM_BOT_TOKEN missing or rejected.")
     else:
-        print(f"Bot: @{me.get('username')}  chat id configured: {chat_id() or '(none — send /start to the bot)'}")
+        mark = "✅" if check["ok"] else f"⚠️ expected @{check['expected']}"
+        print(f"Bot: @{check['username']} {mark}")
+        print(f"Chat id: {chat_id() or '(none — send /start to the bot)'}")
         if configured():
             print("Test message sent." if send_message("🩺 Personal Doctor test message.") else "Send failed.")
+        from .config import load_config
+
+        st = read_status(load_config().data_dir)
+        if not st:
+            print("Tap listener: not seen yet (restart the service after setting the token).")
+        elif st.get("polling_ok"):
+            print(f"Tap listener: ✅ receiving since {st.get('since')}")
+        elif st.get("error_code") == 409:
+            print("Tap listener: ⚠️ another program is polling this bot (Telegram 409) — "
+                  "checkbox taps can't reach the app until it stops.")
+        else:
+            print(f"Tap listener: ⚠️ error {st.get('error_code')} since {st.get('since')}")
