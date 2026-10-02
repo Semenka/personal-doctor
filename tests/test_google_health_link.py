@@ -94,7 +94,7 @@ def test_nudge_sends_once_a_day_until_linked(tmp_path, monkeypatch):
 
     cfg = _cfg(tmp_path)
     sent = []
-    monkeypatch.setattr(ws, "_run_openclaw_send", lambda msg, target=None: sent.append(msg) or True)
+    monkeypatch.setattr(ws, "_run_openclaw_send", lambda msg, target=None, **_: sent.append(msg) or True)
     assert link.nudge_if_unlinked(cfg) is True
     assert "http://100.64.0.2:8000/auth/google-health" in sent[0]
     assert link.nudge_if_unlinked(cfg) is False and len(sent) == 1
@@ -134,7 +134,7 @@ def test_digest_line_carries_the_phone_link(monkeypatch, tmp_path):
     from app.sync import whatsapp_sender as ws
 
     sent = {}
-    monkeypatch.setattr(ws, "_run_openclaw_send", lambda msg, target=None: (sent.setdefault("msg", msg), True)[1])
+    monkeypatch.setattr(ws, "_run_openclaw_send", lambda msg, target=None, **_: (sent.setdefault("msg", msg), True)[1])
     monkeypatch.setattr(ws, "_completion_footer", lambda cfg: "footer")
     monkeypatch.setattr(ws, "_yesterday_activity_line", lambda cfg, day: "")
     cfg = types.SimpleNamespace(data_dir=tmp_path, email_to="", smtp_host="", server_url="http://100.64.0.2:8000")
