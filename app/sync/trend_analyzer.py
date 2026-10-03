@@ -132,6 +132,32 @@ def overlay_ring_recovery(
     return merged
 
 
+# Activity totals that keep accumulating until midnight. At the 08:00 run the
+# running day's file holds a few hundred steps, which is not a day's worth.
+_RUNNING_TOTAL_KEYS = ("steps", "active_minutes", "active_calories", "calories")
+
+
+def settle_running_day(
+    history: List[Dict[str, Any]], running_day: str
+) -> List[Dict[str, Any]]:
+    """Drop the running day's activity totals before averaging or trending.
+
+    2026-09-27's plan read "today 520 vs a 7-day average of 10,662.9" as "steps
+    are the one clear declining pattern" and built its backup action on it:
+    the 520 were the steps taken before 08:00, averaged in as a full day and
+    counted in the "recent 3 days" of the trend. Sleep and recovery for the
+    running day are last night's and complete, so they stay.
+    """
+    settled = []
+    for day_data in history:
+        if day_data.get("_date") == running_day:
+            day_data = {
+                k: v for k, v in day_data.items() if k not in _RUNNING_TOTAL_KEYS
+            }
+        settled.append(day_data)
+    return settled
+
+
 _METRIC_KEYS = [
     ("hrv", "avg_hrv"),
     ("resting_hr", "avg_resting_hr"),
@@ -261,6 +287,15 @@ def format_trend_section(
         if raw_today in (None, "", 0, 0.0):
             unmeasured = True
             today_str = "today not yet measured"
+        elif src_key in _RUNNING_TOTAL_KEYS:
+            # Not comparable with the average, which only holds complete days.
+            if today_data.get("activity_is_previous_day"):
+                today_str = f"yesterday {raw_today} {unit}".rstrip()
+            else:
+                today_str = (
+                    f"so far today {raw_today} {unit}".rstrip()
+                    + " (day in progress, not a low day)"
+                )
         else:
             today_str = f"today {raw_today} {unit}".rstrip()
         lines.append(

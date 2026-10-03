@@ -253,12 +253,15 @@ def create_app() -> FastAPI:
             compute_metric_trends,
             compute_rolling_averages,
             load_primary_wearable_history,
+            settle_running_day,
         )
 
         today = datetime.now(tz=config.timezone).date()
         history = load_action_history_with_sheets(config, num_days=7)
         streaks = compute_streaks(config.data_dir)
-        fitbit_history = load_primary_wearable_history(config.data_dir, today)
+        fitbit_history = settle_running_day(
+            load_primary_wearable_history(config.data_dir, today), today.isoformat()
+        )
         averages = compute_rolling_averages(fitbit_history)
         trends = compute_metric_trends(fitbit_history)
 
@@ -382,6 +385,14 @@ def start_server():
     scheduler.add_job(run_health_os_brief_job, "cron", day_of_week="sun", hour=18, minute=30,
                       id="health_os_brief", misfire_grace_time=7200)
     scheduler.start()
+
+    # Action checkboxes in the Telegram digest need someone listening for taps.
+    try:
+        from app.sync.telegram_bot import start_poller
+
+        start_poller(config)
+    except Exception as exc:
+        print(f"Telegram poller not started: {exc}")
 
     # Boot-time self-check: log loud warnings if WhatsApp delivery or Fitbit Air
     # data are broken. Easier than digging through logs after a regression.

@@ -56,7 +56,7 @@ def test_overdue_alert_throttle_honours_marker(monkeypatch, tmp_path):
     monkeypatch.setattr(cs, "reconcile_schedule_with_results", lambda cfg, t: [])
     monkeypatch.setattr(cs, "overdue_lab_visits", lambda cfg, t: [{"key": "psa", "days_overdue": 40}])
     monkeypatch.setattr(cs, "upcoming_lab_visits", lambda cfg, within_days, today: [])
-    monkeypatch.setattr(whatsapp_sender, "_run_openclaw_send", lambda msg, target=None: sent.append(msg) or True)
+    monkeypatch.setattr(whatsapp_sender, "_run_openclaw_send", lambda msg, target=None, **_: sent.append(msg) or True)
     scheduler.run_overdue_checkup_alert()
     assert sent == [], "overdue block re-sent on the same day the marker says it went out"
 

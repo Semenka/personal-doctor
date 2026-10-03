@@ -179,35 +179,37 @@ def main() -> int:
 
     print()
 
-    # ── Step 4: Email delivery ──────────────────────────────────────
-    print("[4/4] Email delivery...")
+    # ── Step 4: Delivery (phone digest, email per DAILY_EMAIL) ──────
+    print("[4/4] Delivery...")
     if not advice:
         print("  SKIP: No advice to send (advisor API key missing).")
         return 1
 
-    if not config.email_to or not config.smtp_host:
-        print("  SKIP: EMAIL_TO / SMTP_HOST not configured.")
-        return 1
+    from .whatsapp_sender import daily_email_mode, send_whatsapp_advice
 
-    from .daily_advisor import email_advice
-
+    phone_ok = False
     try:
-        email_advice(config, advice)
-        print(f"  OK: emailed to {config.email_to}")
+        phone_ok = send_whatsapp_advice(config, advice)
+        print("  OK: phone digest sent." if phone_ok
+              else "  WARN: phone digest not delivered (see logs).")
     except Exception as exc:
-        print(f"  FAIL: {exc}")
-        return 1
+        print(f"  WARN: phone digest errored: {exc}")
 
-    # WhatsApp delivery via OpenClaw gateway (F3)
-    try:
-        from .whatsapp_sender import send_whatsapp_advice
+    mode = daily_email_mode()
+    if mode == "always" or (mode == "fallback" and not phone_ok):
+        if not config.email_to or not config.smtp_host:
+            print("  SKIP email: EMAIL_TO / SMTP_HOST not configured.")
+            return 0 if phone_ok else 1
+        from .daily_advisor import email_advice
 
-        if send_whatsapp_advice(config, advice):
-            print("  OK: WhatsApp digest sent.")
-        else:
-            print("  WARN: WhatsApp send returned False (see logs).")
-    except Exception as exc:
-        print(f"  WARN: WhatsApp send errored: {exc}")
+        try:
+            email_advice(config, advice)
+            print(f"  OK: emailed to {config.email_to}")
+        except Exception as exc:
+            print(f"  FAIL: {exc}")
+            return 1
+    else:
+        print(f"  Email skipped (DAILY_EMAIL={mode}).")
 
     print()
     print("=== Pipeline complete ===")

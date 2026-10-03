@@ -663,8 +663,22 @@ def run_daily_advisor() -> None:
         advice = generate_daily_advice(config, day)
     except Exception as exc:
         print(f"Daily advisor generation failed: {exc}")
-        # Send a fallback email so the user knows something went wrong
-        if config.email_to and config.smtp_host:
+        # Say so on the phone first; email only if that fails (or by choice).
+        from .whatsapp_sender import _run_openclaw_send, daily_email_mode
+
+        phone_ok = False
+        try:
+            phone_ok = _run_openclaw_send(
+                f"🩺 {day.isoformat()} — today's plan could not be generated.\n"
+                f"{str(exc)[:300]}\n"
+                "Details: ~/personal-doctor/logs/personal-doctor.log"
+            )
+        except Exception as phone_exc:
+            print(f"Phone failure notice failed: {phone_exc}")
+        mode = daily_email_mode()
+        if config.email_to and config.smtp_host and (
+            mode == "always" or (mode == "fallback" and not phone_ok)
+        ):
             try:
                 fallback = {
                     "report_type": "advisor_error",
@@ -719,20 +733,28 @@ def run_daily_advisor() -> None:
         except Exception as exc:
             print(f"Google Drive upload failed: {exc}")
 
-    if config.email_to and config.smtp_host:
+    # Phone digest first (Telegram bot → OpenClaw). The digest went unread by
+    # email all of the week to 2026-10-02, so by default the full plan is only
+    # mailed when no chat channel took the digest (DAILY_EMAIL=always restores
+    # the daily email, =never drops it).
+    from .whatsapp_sender import daily_email_mode, send_whatsapp_advice
+
+    phone_ok = False
+    try:
+        phone_ok = send_whatsapp_advice(config, advice)
+    except Exception as exc:
+        print(f"Phone digest failed (non-fatal): {exc}")
+
+    mode = daily_email_mode()
+    if config.email_to and config.smtp_host and (
+        mode == "always" or (mode == "fallback" and not phone_ok)
+    ):
         try:
             email_advice(config, advice)
-            print(f"Emailed daily advice to {config.email_to}")
+            why = "daily email on" if mode == "always" else "phone digest not delivered"
+            print(f"Emailed daily advice to {config.email_to} ({why})")
         except Exception as exc:
             print(f"Email send failed: {exc}")
-
-    # WhatsApp delivery via OpenClaw gateway (F3)
-    try:
-        from .whatsapp_sender import send_whatsapp_advice
-
-        send_whatsapp_advice(config, advice)
-    except Exception as exc:
-        print(f"WhatsApp send failed (non-fatal): {exc}")
 
 
 def run_auto_credit_job() -> None:

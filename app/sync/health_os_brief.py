@@ -55,9 +55,16 @@ def _goal_status(config: SyncConfig, today: date) -> str:
 
     # Energy: say plainly when the data isn't there rather than implying health.
     try:
-        from .trend_analyzer import compute_rolling_averages, load_primary_wearable_history
+        from .trend_analyzer import (
+            compute_rolling_averages,
+            load_primary_wearable_history,
+            settle_running_day,
+        )
 
-        hist = load_primary_wearable_history(config.data_dir, today, num_days=7)
+        hist = settle_running_day(
+            load_primary_wearable_history(config.data_dir, today, num_days=7),
+            today.isoformat(),
+        )
         avg = compute_rolling_averages(hist) or {}
         measured = {
             k: v for k, v in avg.items()

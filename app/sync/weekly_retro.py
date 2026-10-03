@@ -20,9 +20,17 @@ logger = logging.getLogger("personal-doctor.weekly_retro")
 
 
 def _week_metrics(config: SyncConfig, today: date) -> Dict[str, Any]:
-    from .trend_analyzer import compute_rolling_averages, load_primary_wearable_history
+    from .trend_analyzer import (
+        compute_rolling_averages,
+        load_primary_wearable_history,
+        settle_running_day,
+    )
 
-    current_week = load_primary_wearable_history(config.data_dir, today, num_days=7)
+    # Sunday's retro runs mid-afternoon; the prior week ends on a complete day.
+    current_week = settle_running_day(
+        load_primary_wearable_history(config.data_dir, today, num_days=7),
+        today.isoformat(),
+    )
     prior_week = load_primary_wearable_history(
         config.data_dir, today - timedelta(days=7), num_days=7
     )

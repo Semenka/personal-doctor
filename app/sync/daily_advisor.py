@@ -120,11 +120,13 @@ def _gather_context(
             compute_rolling_averages,
             format_trend_section,
             load_primary_wearable_history,
+            settle_running_day,
         )
 
         fitbit_history = load_primary_wearable_history(config.data_dir, day)
-        context["rolling_averages"] = compute_rolling_averages(fitbit_history)
-        context["metric_trends"] = compute_metric_trends(fitbit_history)
+        settled = settle_running_day(fitbit_history, day.isoformat())
+        context["rolling_averages"] = compute_rolling_averages(settled)
+        context["metric_trends"] = compute_metric_trends(settled)
         context["fitbit_history"] = fitbit_history
     except Exception:
         context["rolling_averages"] = {}
@@ -301,9 +303,22 @@ def _build_prompt(context: Dict[str, Any]) -> str:
 
     # ── Oura section ──
     if oura and (oura.get("sleep_hours", 0) > 0 or oura.get("sleep_quality", 0) > 0):
-        activity_note = ""
         if oura.get("activity_is_previous_day"):
             activity_note = " (previous day \u2014 today's not yet available)"
+        else:
+            activity_note = (
+                " (so far today \u2014 the day is still in progress; never read "
+                "these as a low day"
+            )
+            active = _last_measured(
+                context.get("fitbit_history"), "steps", exclude_date=today
+            )
+            if active:
+                activity_note += (
+                    f". Last complete day, {active.get('_date')}: "
+                    f"{_measured(active.get('steps'))} steps"
+                )
+            activity_note += ")"
 
         oura_section = f"""## Today's wearable data ({today}) — merged via Health Connect{sources_line}
 **Sleep:**
