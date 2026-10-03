@@ -197,3 +197,13 @@ def test_pebble_fragments_are_the_fallback_when_the_air_recorded_nothing():
            _sleep(_pebble_point, "2026-10-01T23:53:00Z", "2026-10-02T02:20:00Z", 147)]
     sel = api._select_night(pts)
     assert sel["source"] == "coredevices" and sum(api._asleep(p) for p in sel["night"]) == 304
+
+
+def test_backfill_replaces_pebble_night_with_the_airs_even_if_shorter():
+    from app.sync.scheduler import _fitbit_payload_improves
+
+    stored = {"steps": 9000, "sleep_hours": 6.37, "sleep_source": "coredevices"}
+    assert _fitbit_payload_improves(stored, {"steps": 9000, "sleep_hours": 5.45, "sleep_source": "fitbit"})
+    # Same source, nothing higher → finalized day is left alone.
+    air = {"steps": 9000, "sleep_hours": 5.45, "sleep_source": "fitbit"}
+    assert not _fitbit_payload_improves(air, dict(air))

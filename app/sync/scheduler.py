@@ -350,6 +350,13 @@ def _fitbit_payload_improves(old, new) -> bool:
                 "active_minutes", "calories", "spo2", "hrv"):
         if (new.get(key) or 0) > (old.get(key) or 0):
             return True
+    # A better SOURCE for the night is an improvement even when the number
+    # drops: if the Pebble's sleep landed first (fallback) and the Fitbit
+    # Air's HR-staged record arrives later, the Air's must replace it.
+    if (new.get("sleep_source") == "fitbit" and new.get("sleep_hours")
+            and old.get("sleep_source") not in ("fitbit",)
+            and (old.get("sleep_source") or old.get("sleep_hours"))):
+        return True
     return False
 
 
