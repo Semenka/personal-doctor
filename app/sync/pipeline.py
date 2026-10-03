@@ -378,6 +378,9 @@ def google_health_api_to_daily_payload(day: date, g: Dict[str, Any]) -> Dict[str
         "data_origins": list(g.get("data_origins") or []),
         "sleep_start": g.get("sleep_start"),
         "sleep_end": g.get("sleep_end"),
+        "sleep_segments": int(g.get("sleep_segments") or 0),
+        "nap_min": int(g.get("nap_min") or 0),
+        "sleep_source": g.get("sleep_source") or "",
         "fetch_errors": list(g.get("errors") or []),
         "activity_is_previous_day": False,
     }

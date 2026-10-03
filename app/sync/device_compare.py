@@ -36,6 +36,7 @@ _COMPARE_METRICS = [
     ("rem_sleep_min", "REM sleep", "min", False),
     ("light_sleep_min", "Light sleep", "min", False),
     ("efficiency", "Sleep efficiency", "%", False),
+    ("nap_min", "Daytime nap", "min", True),
     ("steps", "Steps", "", False),
     ("active_minutes", "Active minutes", "", False),
     ("avg_hr", "Avg heart rate (24h)", "bpm", False),

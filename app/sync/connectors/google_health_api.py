@@ -149,15 +149,81 @@ def _day_filter(prefix: str, day: date) -> str:
     return f'{prefix} >= "{day.isoformat()}" AND {prefix} < "{nxt.isoformat()}"'
 
 
-def _pick_sleep(points: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """The night that defines the day: main sleep if flagged, else the longest."""
-    sessions = [p for p in points if p.get("sleep")]
-    if not sessions:
+# Sleep source preference: the Fitbit Air stages sleep from continuous heart
+# rate; the Pebble's (via Health Connect) is accelerometer-led and counts
+# lying still in bed as sleep (2026-10-03: Pebble 382 min vs Air 327 min for
+# the same night). Health Connect sources are the fallback for nights the Air
+# did not record (charging / not worn).
+_SLEEP_SOURCE_RANK = ("fitbit", "coredevices", "health_connect")
+# A block this close to the main sleep is the same night interrupted, not a nap.
+_SAME_NIGHT_GAP = timedelta(hours=3)
+
+
+def _sleep_source(point: Dict[str, Any]) -> str:
+    o = origin_of(point).lower()
+    for name in _SLEEP_SOURCE_RANK:
+        if name in o:
+            return name
+    return "other"
+
+
+def _iv(point: Dict[str, Any]):
+    from datetime import datetime
+
+    iv = (point.get("sleep") or {}).get("interval") or {}
+    try:
+        return (datetime.fromisoformat(iv["startTime"].replace("Z", "+00:00")),
+                datetime.fromisoformat(iv["endTime"].replace("Z", "+00:00")))
+    except Exception:
         return None
+
+
+def _asleep(point: Dict[str, Any]) -> float:
+    return _num(((point.get("sleep") or {}).get("summary") or {}).get("minutesAsleep"))
+
+
+def _select_night(points: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Choose ONE device's account of the night and stitch it together.
+
+    Returns ``{"main", "night": [...], "naps": [...], "source"}`` or ``{}``.
+    - Device: best-ranked source that recorded any sleep (never mix devices —
+      they describe the same night and would double-count).
+    - Main: its mainSleep-flagged session, else its longest.
+    - Night: main plus every block within 3 h of it — an interrupted night
+      (2026-09-28: 00:38–04:00 then 05:44–07:51, stored as 3.2 h instead of
+      5.2 h because only the main block counted).
+    - Naps: that device's remaining sessions.
+    """
+    sessions = [p for p in points if p.get("sleep") and _iv(p)]
+    if not sessions:
+        return {}
+    by_src: Dict[str, List[Dict[str, Any]]] = {}
     for p in sessions:
-        if (p["sleep"].get("metadata") or {}).get("mainSleep"):
-            return p
-    return max(sessions, key=lambda p: _num((p["sleep"].get("summary") or {}).get("minutesAsleep")))
+        by_src.setdefault(_sleep_source(p), []).append(p)
+    source = next((n for n in _SLEEP_SOURCE_RANK if n in by_src), next(iter(by_src)))
+    mine = by_src[source]
+    flagged = [p for p in mine if (p["sleep"].get("metadata") or {}).get("mainSleep")]
+    main = flagged[0] if flagged else max(mine, key=_asleep)
+
+    night = [main]
+    rest = sorted((p for p in mine if p is not main), key=lambda p: _iv(p)[0])
+    changed = True
+    while changed:  # grow outward so a chain of fragments joins up
+        changed = False
+        start = min(_iv(p)[0] for p in night)
+        end = max(_iv(p)[1] for p in night)
+        for p in list(rest):
+            ps, pe = _iv(p)
+            if (ps >= end and ps - end <= _SAME_NIGHT_GAP) or (pe <= start and start - pe <= _SAME_NIGHT_GAP):
+                night.append(p)
+                rest.remove(p)
+                changed = True
+    return {"main": main, "night": night, "naps": rest, "source": source}
+
+
+def _pick_sleep(points: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Main sleep session of the preferred device (kept for callers/tests)."""
+    return _select_night(points).get("main")
 
 
 def fetch_daily_summary(config: SyncConfig, day: date) -> Dict[str, Any]:
@@ -175,6 +241,7 @@ def fetch_daily_summary(config: SyncConfig, day: date) -> Dict[str, Any]:
         "awake_min": 0.0, "sleep_period_min": 0.0, "resting_hr": 0, "hrv": 0.0,
         "spo2": 0.0, "breathing_rate": 0.0, "avg_hr": 0.0,
         "sleep_start": None, "sleep_end": None, "errors": [],
+        "sleep_segments": 0, "nap_min": 0.0, "sleep_source": "",
     }
     origins: set = set()
 
@@ -222,30 +289,36 @@ def fetch_daily_summary(config: SyncConfig, day: date) -> Dict[str, Any]:
 
     def sleep():
         pts = _list(sess, "sleep", _day_filter("sleep.interval.civil_end_time", day), page_size=50)
-        p = _pick_sleep(pts)
-        if not p:
+        sel = _select_night(pts)
+        if not sel:
             return
-        s = p["sleep"]
-        summ = s.get("summary") or {}
-        out["sleep_minutes"] = _num(summ.get("minutesAsleep"))
-        out["awake_min"] = _num(summ.get("minutesAwake"))
-        out["sleep_period_min"] = _num(summ.get("minutesInSleepPeriod"))
-        for st in summ.get("stagesSummary") or []:
-            key = {"DEEP": "deep_min", "LIGHT": "light_min", "REM": "rem_min"}.get(st.get("type"))
-            if key:
-                out[key] = _num(st.get("minutes"))
-        if not out["sleep_minutes"]:  # classic sleep without a summary: from stages
-            for st in s.get("stages") or []:
-                if st.get("type") in ("ASLEEP", "LIGHT", "DEEP", "REM"):
-                    from datetime import datetime
-                    a = datetime.fromisoformat(st["startTime"].replace("Z", "+00:00"))
-                    b = datetime.fromisoformat(st["endTime"].replace("Z", "+00:00"))
-                    out["sleep_minutes"] += (b - a).total_seconds() / 60
-        iv = s.get("interval") or {}
-        out["sleep_start"], out["sleep_end"] = iv.get("startTime"), iv.get("endTime")
-        o = origin_of(p)
-        if o:
-            origins.add(o)
+        for p in sel["night"]:
+            s = p["sleep"]
+            summ = s.get("summary") or {}
+            asleep = _num(summ.get("minutesAsleep"))
+            if not asleep:  # classic sleep without a summary: from stages
+                for st in s.get("stages") or []:
+                    if st.get("type") in ("ASLEEP", "LIGHT", "DEEP", "REM"):
+                        from datetime import datetime
+                        a = datetime.fromisoformat(st["startTime"].replace("Z", "+00:00"))
+                        b = datetime.fromisoformat(st["endTime"].replace("Z", "+00:00"))
+                        asleep += (b - a).total_seconds() / 60
+            out["sleep_minutes"] += asleep
+            out["awake_min"] += _num(summ.get("minutesAwake"))
+            out["sleep_period_min"] += _num(summ.get("minutesInSleepPeriod"))
+            for st in summ.get("stagesSummary") or []:
+                key = {"DEEP": "deep_min", "LIGHT": "light_min", "REM": "rem_min"}.get(st.get("type"))
+                if key:
+                    out[key] += _num(st.get("minutes"))
+        out["sleep_start"] = min(_iv(p)[0] for p in sel["night"]).isoformat().replace("+00:00", "Z")
+        out["sleep_end"] = max(_iv(p)[1] for p in sel["night"]).isoformat().replace("+00:00", "Z")
+        out["sleep_segments"] = len(sel["night"])
+        out["nap_min"] = sum(_asleep(p) for p in sel["naps"])
+        out["sleep_source"] = sel["source"]
+        for p in pts:  # provenance for every device that reported, used or not
+            o = origin_of(p)
+            if o:
+                origins.add(o)
 
     def daily(data_type: str, field_prefix: str, key: str, value_key: str, out_key: str):
         def _run():

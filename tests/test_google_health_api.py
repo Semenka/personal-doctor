@@ -164,3 +164,36 @@ def test_steps_never_sum_overlapping_sources(monkeypatch):
     monkeypatch.setattr(api, "_daily_rollup", lambda sess, t, d: {})
     s = api.fetch_daily_summary(types.SimpleNamespace(), day)
     assert s["steps"] == 12234
+
+
+def _sleep(maker, start, end, asleep, **meta):
+    return maker("sleep", {"interval": {"startTime": start, "endTime": end},
+                           "summary": {"minutesAsleep": asleep, "minutesInSleepPeriod": asleep + 10},
+                           "metadata": meta})
+
+
+def test_night_prefers_the_air_even_when_the_pebble_is_flagged_main():
+    """2026-10-03: the Pebble record carried mainSleep and its 382 min beat
+    the Air's HR-staged 327 min for the same night."""
+    pts = [_sleep(_fitbit_point, "2026-10-02T23:03:00Z", "2026-10-03T04:37:00Z", 327),
+           _sleep(_pebble_point, "2026-10-02T22:15:00Z", "2026-10-03T04:37:00Z", 382, mainSleep=True)]
+    sel = api._select_night(pts)
+    assert sel["source"] == "fitbit" and api._asleep(sel["main"]) == 327
+
+
+def test_interrupted_night_is_stitched_and_nap_kept_apart():
+    """2026-09-28: 00:38–04:00 then 05:44–07:51 is one night (310 min), not 191."""
+    pts = [_sleep(_fitbit_point, "2026-09-27T22:38:00Z", "2026-09-28T02:00:00Z", 191, mainSleep=True),
+           _sleep(_fitbit_point, "2026-09-28T03:44:00Z", "2026-09-28T05:51:00Z", 119, nap=True),
+           _sleep(_fitbit_point, "2026-09-28T13:36:00Z", "2026-09-28T14:26:00Z", 36, nap=True),
+           _sleep(_pebble_point, "2026-09-27T22:41:00Z", "2026-09-28T02:01:00Z", 200)]
+    sel = api._select_night(pts)
+    assert sum(api._asleep(p) for p in sel["night"]) == 310
+    assert [api._asleep(p) for p in sel["naps"]] == [36]
+
+
+def test_pebble_fragments_are_the_fallback_when_the_air_recorded_nothing():
+    pts = [_sleep(_pebble_point, "2026-10-01T20:37:00Z", "2026-10-01T23:14:00Z", 157),
+           _sleep(_pebble_point, "2026-10-01T23:53:00Z", "2026-10-02T02:20:00Z", 147)]
+    sel = api._select_night(pts)
+    assert sel["source"] == "coredevices" and sum(api._asleep(p) for p in sel["night"]) == 304
