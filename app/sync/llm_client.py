@@ -380,6 +380,11 @@ def _generate_codex(
             codex_bin, "exec",
             "--model", model,
             "-c", f"model_reasoning_effort={reasoning}",
+            # The user's interactive Codex hooks (~/.codex/hooks.json) must not
+            # run here: a Stop hook that asks "is everything complete?" makes
+            # the last message its confirmation, not the answer. The daily
+            # plan was "Taskmaster check 10 complete…" on 2026-10-08 → 10-10.
+            "-c", "features.hooks=false",
             "--sandbox", "read-only",
             "--skip-git-repo-check",
             "--ephemeral",

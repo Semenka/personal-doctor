@@ -98,6 +98,8 @@ class DriveReportStorageTests(unittest.TestCase):
 
         self.assertEqual(result, "result")
         self.assertIn("[SYSTEM]", captured["input"])
+        # The user's interactive Codex hooks must never run in the pipeline.
+        self.assertIn("features.hooks=false", captured["cmd"])
         self.assertIn("user", captured["input"])
         self.assertNotIn(captured["input"], captured["cmd"])
 
