@@ -104,9 +104,7 @@ fi
 # when they fired, would have sent the digest twice. Scheduling lives in
 # app/server.py; the OpenClaw skill is the on-demand interface.
 if command -v openclaw &>/dev/null; then
-    for job_name in "personal-doctor-daily" "personal-doctor-oura" "personal-doctor-gdrive"; do
-        openclaw cron rm "$job_name" 2>/dev/null && info "Removed stale OpenClaw cron: $job_name" || true
-    done
+    python3 "$REPO_DIR/scripts/cleanup_openclaw_crons.py"
 else
     warn "OpenClaw CLI not found — skipping cron cleanup"
 fi

@@ -46,9 +46,7 @@ if [ "${1:-}" = "--uninstall" ]; then
     rm -rf "$OPENCLAW_SKILLS_DIR/$SKILL_NAME" 2>/dev/null && info "Removed skill" || true
     if command -v openclaw &>/dev/null; then
         # Remove cron jobs
-        for job_name in "personal-doctor-daily" "personal-doctor-oura" "personal-doctor-gdrive"; do
-            openclaw cron rm "$job_name" 2>/dev/null && info "Removed cron: $job_name" || true
-        done
+        python3 "$REPO_DIR/scripts/cleanup_openclaw_crons.py" --include-managed
     fi
     echo "Done. Data preserved at ~/personal-doctor/"
     exit 0
@@ -124,6 +122,7 @@ if [ "$WITH_CRON" = true ]; then
     # Only for a host WITHOUT the launchd service — otherwise the digest goes out twice.
     openclaw cron add \
         --name "personal-doctor-daily" \
+        --agent personal-doctor --no-deliver \
         --cron "0 8 * * *" \
         --message "Run my health pipeline now. Execute: cd $REPO_DIR && $PYTHON_CMD -m app.sync.run_pipeline 2>&1 | tee -a $LOG_DIR/pipeline.log. Then summarize the output." \
         2>/dev/null && info "Cron: daily pipeline at 08:00" || warn "Cron job may already exist (personal-doctor-daily)"
@@ -134,9 +133,7 @@ else
     step "OpenClaw cron jobs"
     # Remove jobs left behind by earlier versions of this script — the
     # launchd service already runs the same pipeline at 07:38 → 08:00.
-    for job_name in "personal-doctor-daily" "personal-doctor-oura" "personal-doctor-gdrive"; do
-        openclaw cron rm "$job_name" 2>/dev/null && info "Removed stale cron: $job_name" || true
-    done
+    python3 "$REPO_DIR/scripts/cleanup_openclaw_crons.py"
     info "Scheduling stays with the launchd service (use --with-cron on a host without it)"
 fi
 
