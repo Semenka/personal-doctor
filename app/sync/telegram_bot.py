@@ -189,12 +189,9 @@ def _save_offset(data_dir: Path, offset: int) -> None:
 
 
 def _handle_callback(config: Any, cq: Dict[str, Any], today: date) -> None:
-    from .action_tracker import (
-        load_actions,
-        mark_action_done_with_sheets,
-        mark_action_undone_with_sheets,
-    )
+    from .action_tracker import load_actions, mark_action_done, mark_action_undone
 
+    sheet_sync = None
     msg = cq.get("message") or {}
     chat = str((msg.get("chat") or {}).get("id", ""))
     reply = "Not your tracker."
@@ -210,12 +207,16 @@ def _handle_callback(config: Any, cq: Dict[str, Any], today: date) -> None:
         elif not any(a.get("idx") == idx for a in load_actions(config.data_dir, day)):
             reply = "Action not found."
         else:
+            # Local record first, then the button and the answer; the Sheet
+            # comes last. Telegram drops an answer after a few seconds, and
+            # the Sheet round trip took 26 s on 2026-10-10 — the tap was
+            # recorded but the spinner never resolved.
             if verb == "d":
-                mark_action_done_with_sheets(config, day, idx)
-                reply = "Done ✅"
+                mark_action_done(config.data_dir, day, idx)
+                reply, sheet_sync = "Done ✅", "mark_action_done_sheet"
             else:
-                mark_action_undone_with_sheets(config, day, idx)
-                reply = "Unticked"
+                mark_action_undone(config.data_dir, day, idx)
+                reply, sheet_sync = "Unticked", "mark_action_undone_sheet"
             keyboard = action_keyboard(day, load_actions(config.data_dir, day))
             if keyboard and msg.get("message_id"):
                 _call("editMessageReplyMarkup", {
@@ -223,6 +224,13 @@ def _handle_callback(config: Any, cq: Dict[str, Any], today: date) -> None:
                     "reply_markup": keyboard,
                 })
     _call("answerCallbackQuery", {"callback_query_id": cq.get("id"), "text": reply})
+    if sheet_sync:
+        try:
+            from . import sheets_tracker
+
+            getattr(sheets_tracker, sheet_sync)(config, day, idx)
+        except Exception as exc:
+            logger.warning(f"Sheet sync after tap failed (local record kept): {exc}")
 
 
 def _handle_message(message: Dict[str, Any]) -> None:

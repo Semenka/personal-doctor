@@ -37,11 +37,15 @@ def _cfg(tmp_path):
     return cfg
 
 
-def _no_sheets(monkeypatch):
-    monkeypatch.setattr(action_tracker, "mark_action_done_with_sheets",
-                        lambda c, d, i: action_tracker.mark_action_done(c.data_dir, d, i))
-    monkeypatch.setattr(action_tracker, "mark_action_undone_with_sheets",
-                        lambda c, d, i: action_tracker.mark_action_undone(c.data_dir, d, i))
+def _no_sheets(monkeypatch, calls=None):
+    """Stub the Sheet; with ``calls``, record the sync in the Bot API call log."""
+    from app.sync import sheets_tracker
+
+    def stub(name):
+        return lambda c, d, i: calls.append((name, {})) if calls is not None else None
+
+    monkeypatch.setattr(sheets_tracker, "mark_action_done_sheet", stub("sheet_done"))
+    monkeypatch.setattr(sheets_tracker, "mark_action_undone_sheet", stub("sheet_undone"))
 
 
 def test_keyboard_has_one_checkbox_per_action(tmp_path):
@@ -74,7 +78,7 @@ def test_digest_goes_to_the_bot_with_buttons_instead_of_the_text_protocol(monkey
 def test_tap_ticks_the_action_and_flips_the_button(monkeypatch, tmp_path):
     calls = _bot(monkeypatch)
     cfg = _cfg(tmp_path)
-    _no_sheets(monkeypatch)
+    _no_sheets(monkeypatch, calls)
     tap = {"update_id": 1, "callback_query": {
         "id": "cq1", "data": f"d:{DAY}:0",
         "message": {"message_id": 7, "chat": {"id": 4242}},
@@ -84,6 +88,10 @@ def test_tap_ticks_the_action_and_flips_the_button(monkeypatch, tmp_path):
     edit = next(p for m, p in calls if m == "editMessageReplyMarkup")
     assert edit["reply_markup"]["inline_keyboard"][0][0]["text"].startswith("✅ 1.")
     assert next(p for m, p in calls if m == "answerCallbackQuery")["text"] == "Done ✅"
+
+    # The answer must not wait for the Sheet: Telegram expires it in seconds.
+    order = [m for m, _ in calls]
+    assert order.index("answerCallbackQuery") < order.index("sheet_done")
 
     # A replayed update sets the same state again — it never unticks.
     telegram_bot.handle_update(cfg, tap, today=date(2026, 10, 2))
