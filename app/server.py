@@ -397,34 +397,15 @@ def start_server():
     # Boot-time self-check: log loud warnings if WhatsApp delivery or Fitbit Air
     # data are broken. Easier than digging through logs after a regression.
     def _self_check() -> None:
-        import subprocess
-        # 1. WhatsApp dry-run (does not actually send). ~4s idle, >10s under
-        #    boot load — same 30s budget as a real send, or a slow CLI start
-        #    reads as a WhatsApp outage (2026-09-25 20:46).
-        #    Resolve the binary the same way the sender does: a bare "openclaw"
-        #    hits whatever the launchd PATH pins, which may be a copy bound to
-        #    an unsupported Node and would report a false outage here.
+        # Read gateway health; message dry-runs initialize an unnecessary CLI
+        # state owner and can time out even while the gateway is connected.
         try:
-            from app.sync.whatsapp_sender import _resolve_openclaw_bin
-            openclaw_bin = _resolve_openclaw_bin()
-            if not openclaw_bin:
-                raise FileNotFoundError("no runnable openclaw CLI")
-            r = subprocess.run(
-                [openclaw_bin, "message", "send", "--channel", "whatsapp",
-                 "--target", os.getenv("WHATSAPP_TARGET", "+393491913903"),
-                 "--message", "selfcheck", "--dry-run"],
-                capture_output=True, text=True, timeout=30, check=False,
-            )
-            if r.returncode != 0 or "Outbound not configured" in (r.stderr + r.stdout):
-                logger.warning(
-                    f"⚠️ Self-check: WhatsApp send is broken — "
-                    f"`launchctl kickstart -k gui/$UID/ai.openclaw.gateway` may fix it. "
-                    f"stderr={r.stderr.strip()[:200]}"
-                )
+            from app.sync.whatsapp_sender import probe_gateway_whatsapp
+            connected, error = probe_gateway_whatsapp()
+            if not connected:
+                logger.warning(f"Self-check: WhatsApp gateway health failed: {error}")
             else:
-                logger.info("Self-check: WhatsApp delivery OK (dry-run)")
-        except FileNotFoundError:
-            logger.warning("Self-check: openclaw CLI not on PATH — WhatsApp will fail")
+                logger.info("Self-check: WhatsApp gateway connected (read-only health check)")
         except Exception as exc:
             logger.warning(f"Self-check: WhatsApp probe errored: {exc}")
         # 2. Fitbit Air freshness (uses on-disk payload, no API call)

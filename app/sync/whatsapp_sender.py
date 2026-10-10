@@ -14,6 +14,7 @@ Both are best-effort: any subprocess error is caught and logged, not raised.
 from __future__ import annotations
 
 import logging
+import json
 import os
 import re
 import shutil
@@ -119,6 +120,29 @@ def _resolve_openclaw_bin() -> Optional[str]:
             _OPENCLAW_PATH_CACHE = c
             return c
     return None
+
+
+def probe_gateway_whatsapp(timeout_s: int = 30) -> tuple[bool, str]:
+    """Check the existing gateway without initializing a separate message sender."""
+    binary = _resolve_openclaw_bin()
+    if not binary:
+        return False, "no runnable openclaw CLI found"
+    try:
+        result = subprocess.run([binary, "health", "--json"], capture_output=True,
+                                text=True, timeout=timeout_s, check=False)
+        if result.returncode != 0:
+            return False, f"gateway health probe exited {result.returncode}"
+        health = json.loads(result.stdout)
+        channel = (health.get("channels") or {}).get("whatsapp") or {}
+        account = (channel.get("accounts") or {}).get("default", channel)
+        connected = bool(health.get("ok") and account.get("enabled") and
+                         account.get("running") and account.get("connected") and
+                         account.get("linked") and account.get("healthState") in {None, "healthy"})
+        return connected, "" if connected else "WhatsApp gateway account is not connected and linked"
+    except subprocess.TimeoutExpired:
+        return False, f"gateway health probe timed out after {timeout_s}s"
+    except (OSError, ValueError, TypeError, AttributeError) as exc:
+        return False, f"gateway health probe failed: {type(exc).__name__}"
 
 
 def _openclaw_send_once(
