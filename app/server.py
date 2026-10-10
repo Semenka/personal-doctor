@@ -458,10 +458,13 @@ def start_server():
             silence = watch_silence(config, _date.fromisoformat(today_iso))
             device_txt = describe_device_silence(silence)
             if device_txt:
+                # Same device-aware text as the digest: with one watch still
+                # reporting, "steps are phone-sensor only / re-link the cloud"
+                # was untrue and pointed at the wrong fix (2026-10-10).
+                from app.sync.pipeline import watch_banner
+
                 logger.warning(
-                    f"⚠️ Self-check: {device_txt} — steps are phone-sensor only; "
-                    "Fitbit: scripts.google_health_api_auth (cloud) or Google Fit ↔ Health Connect sync; "
-                    "Pebble: app → Settings → Health → Sync to Health Connect."
+                    f"⚠️ Self-check: {watch_banner(config, silence) or device_txt}"
                 )
             else:
                 logger.info("Self-check: Fitbit Air and Pebble both reporting.")
