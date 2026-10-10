@@ -605,12 +605,32 @@ def watch_banner(config: SyncConfig, silence: Dict[str, Any], min_days: int = 3)
         return ""
     reporting = [d["label"] for k, d in devices.items() if k not in silent]
     link = f"{config.server_url}/auth/google-health"
-    fixes = {
-        "fitbit": (
+    # The right fix depends on WHERE the break is. With the Google Health
+    # cloud already linked (the Pebble's data arriving through it proves the
+    # path works), a silent Air is a device-side problem — telling the user
+    # to "link the cloud" (2026-10-06..10) sent them to fix the wrong thing.
+    try:
+        from .connectors.google_health_api import has_credentials as _api_linked
+
+        cloud_linked = bool(_api_linked(config))
+    except Exception:
+        cloud_linked = False
+    if cloud_linked:
+        fitbit_fix = (
+            "Fitbit Air: the cloud link is fine — the band itself has stopped "
+            "uploading. Charge it, wear it, then open the Google Health (Fitbit) "
+            "app and pull down to sync. Until then HRV, resting HR and SpO2 are "
+            "NOT measured, and sleep is the Pebble's estimate (it counts time "
+            "lying still, so it reads high)."
+        )
+    else:
+        fitbit_fix = (
             "Fitbit Air: link the Google Health cloud once from your phone at "
             f"{link} (or `.venv/bin/python -m scripts.google_health_api_auth` on the "
             "Mac), or fix the phone's Google Fit ↔ Health Connect sync."
-        ),
+        )
+    fixes = {
+        "fitbit": fitbit_fix,
         "pebble": (
             "Pebble: open the Pebble app → Settings → Health → *Sync to Health "
             "Connect*, then open the Google Health app once so it imports the "

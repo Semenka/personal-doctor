@@ -255,6 +255,7 @@ def format_trend_section(
     averages: Dict[str, float],
     trends: Dict[str, str],
     today_data: Optional[Dict[str, Any]],
+    history: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     """Format a markdown section for the AI prompt showing 7-day context."""
     if not averages:
@@ -307,6 +308,20 @@ def format_trend_section(
             "(\"not yet measured\" = no reading had synced when this ran — "
             "it is an absent value, NOT a zero reading. The 7-day average and "
             "trend for that metric exclude unmeasured days.)"
+        )
+
+    # Mixed instruments: when the Fitbit Air is silent the night comes from
+    # the Pebble, which reads ~1 h high. A sleep "trend" across both is partly
+    # a change of device, not of sleep — say so.
+    recent = (history or [])[-7:] if history else []
+    fallback = [h for h in recent if (h.get("sleep_hours") or 0)
+                and (h.get("sleep_source") or "fitbit") != "fitbit"]
+    if fallback:
+        lines.append(
+            f"(Sleep caveat: {len(fallback)} of the last {len(recent)} nights are "
+            "Pebble estimates (Fitbit Air silent) and read ~1 h high, with no "
+            "HRV / resting HR. Do not read a rise in average sleep across the "
+            "switch as real improvement.)"
         )
 
     return "\n".join(lines)

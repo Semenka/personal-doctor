@@ -270,6 +270,28 @@ def render_compare_whatsapp(config: SyncConfig, day: str) -> str:
     return "\n".join(lines)
 
 
+def _sleep_source_caveat(config: SyncConfig, day: str) -> str:
+    """Tell the model when the night is NOT the Fitbit Air's HR-staged record.
+
+    The Pebble (Health Connect fallback) counts time lying still as sleep —
+    on nights both recorded it read 0.9–1.1 h higher than the Air — and its
+    staging / "100% efficiency" are not comparable. Without this line the
+    advisor treated a Pebble night as Air-quality data (2026-10-06..10).
+    """
+    fb = _load(config, day, "fitbit") or {}
+    src = (fb.get("sleep_source") or "").lower()
+    if not fb.get("sleep_hours") or src in ("", "fitbit"):
+        return ""
+    name = "Pebble" if "coredevices" in src else "a fallback Health Connect source"
+    return (
+        f"- SLEEP SOURCE CAVEAT: last night comes from {name} because the Fitbit "
+        "Air recorded nothing. Treat the duration as an upper estimate (typically "
+        "~1 h high), ignore its stage split, and do not compare it with earlier "
+        "Fitbit Air nights as if it were the same instrument. HRV, resting HR and "
+        "SpO2 were not measured."
+    )
+
+
 def _sleep_timing_line(config: SyncConfig, day: str) -> str:
     """Actual bedtime / wake time in local time, from the watch's sleep
     interval. Without it the advisor prescribed "lights-out by 23:35" blind to
@@ -314,6 +336,11 @@ def render_compare_advisor_block(config: SyncConfig, day: str) -> str:
         timing = _sleep_timing_line(config, day)
         if timing:
             lines.append(timing)
+        caveat = _sleep_source_caveat(config, day)
+        if caveat:
+            # Efficiency from a non-Air source is an artifact (period == asleep).
+            lines = [ln for ln in lines if not ln.startswith("- Sleep efficiency")]
+            lines.append(caveat)
         return "\n".join(lines)
 
     lines = [

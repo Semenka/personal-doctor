@@ -444,7 +444,9 @@ def _build_prompt(context: Dict[str, Any]) -> str:
     if averages:
         from .trend_analyzer import format_trend_section
 
-        trend_text = format_trend_section(averages, trends, oura)
+        trend_text = format_trend_section(
+            averages, trends, oura, history=context.get("fitbit_history"),
+        )
         if trend_text:
             sections.append(trend_text)
 
