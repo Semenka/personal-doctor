@@ -402,6 +402,21 @@ def _generate_codex(
         except subprocess.TimeoutExpired:
             raise RuntimeError(f"codex exec timed out after {timeout_s}s")
 
+        if proc.returncode != 0 and "model is not supported" in (proc.stderr or "") + (proc.stdout or ""):
+            # The pinned model was retired from the account (gpt-5.5 on
+            # 2026-10-15: no plan on 10-16). Retry once on the account's own
+            # default rather than failing the whole morning.
+            logger.warning(f"Codex model {model!r} retired — retrying with the CLI default model.")
+            i = cmd.index("--model")
+            cmd = cmd[:i] + cmd[i + 2:]
+            try:
+                proc = subprocess.run(
+                    cmd, input=prompt, capture_output=True, text=True,
+                    timeout=timeout_s, check=False, env=_codex_exec_env(),
+                )
+            except subprocess.TimeoutExpired:
+                raise RuntimeError(f"codex exec timed out after {timeout_s}s")
+
         if proc.returncode != 0:
             # The CLI echoes the whole prompt on stdout before it fails, so
             # the first 400 chars were always "[SYSTEM] You are an

@@ -134,3 +134,24 @@ class DriveReportStorageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_codex_retries_on_the_default_model_when_the_pinned_one_is_retired(tmp_path):
+    cmds = []
+
+    def fake_run(cmd, **kwargs):
+        cmds.append(cmd)
+        if "--model" in cmd:
+            return SimpleNamespace(returncode=1, stdout="", stderr=(
+                "ERROR: The 'gpt-5.5' model is not supported when using Codex with a ChatGPT account."))
+        Path(cmd[cmd.index("--output-last-message") + 1]).write_text("plan")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    with patch("app.sync.llm_client._codex_cli_path", return_value="/usr/bin/codex"), patch(
+        "app.sync.llm_client._codex_exec_env", return_value={}
+    ), patch("app.sync.llm_client.subprocess.run", side_effect=fake_run):
+        assert _generate_codex(system="s", user="u", model="gpt-5.5",
+                               reasoning="low", timeout_s=10) == "plan"
+    assert len(cmds) == 2 and "--model" not in cmds[1]
+    assert "features.hooks=false" in cmds[1]
+
