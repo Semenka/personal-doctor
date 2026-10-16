@@ -63,3 +63,25 @@ def test_prompt_activity_block_says_so_far_and_gives_last_full_day():
     })
     assert "Activity (so far today" in prompt
     assert "Last complete day, 2026-09-26: 10700 steps" in prompt
+
+
+def test_pebble_nights_do_not_feed_sleep_stage_averages(tmp_path):
+    import json
+    from datetime import date, timedelta
+
+    from app.sync.trend_analyzer import compute_rolling_averages, load_primary_wearable_history
+
+    day = date(2026, 10, 16)
+    pebble_deep = [156, 96, 131, 50, 262]
+    for i in range(7):
+        d = (day - timedelta(days=i)).isoformat()
+        if i < 2:
+            p = {"sleep_hours": 7.0, "deep_sleep_min": 70, "rem_sleep_min": 95, "sleep_source": "fitbit"}
+        else:
+            p = {"sleep_hours": 6.5, "deep_sleep_min": pebble_deep[i - 2], "rem_sleep_min": 0,
+                 "sleep_source": "coredevices.coreapp"}
+        (tmp_path / f"fitbit_{d}.json").write_text(json.dumps(p))
+    hist = load_primary_wearable_history(tmp_path, day, num_days=7)
+    avgs = compute_rolling_averages(hist)
+    assert avgs["avg_deep_sleep_min"] == 70
+    assert avgs["avg_sleep_hours"] > 6.5  # totals still count; the caveat line labels them

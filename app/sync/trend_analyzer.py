@@ -69,6 +69,7 @@ def load_primary_wearable_history(
             payload = json.loads(path.read_text())
             payload["_date"] = d.isoformat()
             payload.setdefault("source", "fitbit" if path == fitbit_path else "oura")
+            _drop_fallback_stages(payload)
             if path == fitbit_path and oura_path.exists():
                 try:
                     payload = overlay_ring_recovery(
@@ -81,6 +82,20 @@ def load_primary_wearable_history(
             continue
     history.reverse()
     return history
+
+
+# Sleep-stage minutes from a non-Air night (the Pebble via Health Connect)
+# are not comparable: 2026-10-06..10 read 131–262 min deep with 0 REM, and
+# the 10-16 plan called a normal 71 min deep "declining" against that
+# inflated average. Keep the night's total, drop its stages.
+_STAGE_KEYS = ("deep_sleep_min", "rem_sleep_min", "light_sleep_min")
+
+
+def _drop_fallback_stages(payload: Dict[str, Any]) -> None:
+    src = payload.get("sleep_source")
+    if src and src != "fitbit":
+        for key in _STAGE_KEYS:
+            payload.pop(key, None)
 
 
 # Recovery metrics the Oura ring measures and the phone relay never delivers.
