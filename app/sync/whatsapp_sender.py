@@ -591,6 +591,17 @@ def send_whatsapp_advice(
             if yline:
                 lines.append("")
                 lines.append(yline)
+        # Device comparison in one line (full dashboard is in the email).
+        try:
+            from datetime import date as _ddate
+
+            from .device_dashboard import render_phone_line
+
+            dline = render_phone_line(config, _ddate.fromisoformat(day))
+            if dline:
+                lines.append(dline)
+        except Exception as exc:
+            logger.warning(f"device comparison line failed: {exc}")
     except Exception as exc:
         logger.warning(f"wearable WhatsApp line failed: {exc}")
 

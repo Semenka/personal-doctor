@@ -207,3 +207,27 @@ def test_backfill_replaces_pebble_night_with_the_airs_even_if_shorter():
     # Same source, nothing higher → finalized day is left alone.
     air = {"steps": 9000, "sleep_hours": 5.45, "sleep_source": "fitbit"}
     assert not _fitbit_payload_improves(air, dict(air))
+
+
+def test_per_device_capture_for_the_comparison_dashboard(monkeypatch):
+    day = date(2026, 11, 6)
+    phone = lambda pkg: {"dataSource": {"platform": "HEALTH_CONNECT", "application": {"packageName": pkg},
+                                         "device": {"formFactor": "PHONE"}}}
+
+    def fake_list(sess, data_type, filter_expr, page_size=1000, max_pages=10):
+        if data_type == "steps":
+            return [_fitbit_point("steps", {"count": "12928"}), _pebble_point("steps", {"count": "12573"}),
+                    {"steps": {"count": "11563"}, **phone("com.google.android.apps.fitness")},
+                    {"steps": {"count": "11550"}, **phone("com.android.healthconnect.phone")}]
+        if data_type == "sleep":
+            return [_sleep(_fitbit_point, "2026-11-05T23:00:00Z", "2026-11-06T06:14:00Z", 434, mainSleep=True),
+                    _sleep(_pebble_point, "2026-11-05T22:50:00Z", "2026-11-06T06:16:00Z", 436)]
+        return []
+
+    monkeypatch.setattr(api, "_session", lambda cfg: object())
+    monkeypatch.setattr(api, "_list", fake_list)
+    monkeypatch.setattr(api, "_daily_rollup", lambda s, t, d: {"steps": {"steps": {"countSum": "12928"}}}.get(t, {}))
+    s = api.fetch_daily_summary(types.SimpleNamespace(), day)
+    assert s["device_steps"] == {"fitbit_air": 12928, "pebble": 12573, "phone": 11563}  # phone copies not summed
+    assert s["device_sleep_min"] == {"fitbit_air": 434.0, "pebble": 436.0}
+    assert s["steps"] == 12928 and s["sleep_source"] == "fitbit"

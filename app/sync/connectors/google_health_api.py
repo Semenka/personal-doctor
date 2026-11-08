@@ -182,7 +182,23 @@ def _asleep(point: Dict[str, Any]) -> float:
     return _num(((point.get("sleep") or {}).get("summary") or {}).get("minutesAsleep"))
 
 
-def _select_night(points: List[Dict[str, Any]]) -> Dict[str, Any]:
+def device_of(origin: str) -> Optional[str]:
+    """Which wearable a provenance string belongs to (for the comparison)."""
+    o = (origin or "").lower()
+    if "fitbit" in o:
+        return "fitbit_air"
+    if "coredevices" in o or "pebble" in o:
+        return "pebble"
+    if "phone" in o or "apps.fitness" in o:
+        return "phone"
+    return None
+
+
+def _night_minutes(night: List[Dict[str, Any]]) -> float:
+    return sum(_asleep(p) for p in night)
+
+
+def _select_night(points: List[Dict[str, Any]], source: Optional[str] = None) -> Dict[str, Any]:
     """Choose ONE device's account of the night and stitch it together.
 
     Returns ``{"main", "night": [...], "naps": [...], "source"}`` or ``{}``.
@@ -200,7 +216,10 @@ def _select_night(points: List[Dict[str, Any]]) -> Dict[str, Any]:
     by_src: Dict[str, List[Dict[str, Any]]] = {}
     for p in sessions:
         by_src.setdefault(_sleep_source(p), []).append(p)
-    source = next((n for n in _SLEEP_SOURCE_RANK if n in by_src), next(iter(by_src)))
+    if source is None:
+        source = next((n for n in _SLEEP_SOURCE_RANK if n in by_src), next(iter(by_src)))
+    elif source not in by_src:
+        return {}
     mine = by_src[source]
     flagged = [p for p in mine if (p["sleep"].get("metadata") or {}).get("mainSleep")]
     main = flagged[0] if flagged else max(mine, key=_asleep)
@@ -272,6 +291,15 @@ def fetch_daily_summary(config: SyncConfig, day: date) -> Dict[str, Any]:
         if not total and per_origin:
             total = max(per_origin.values())
         out["steps"] = total
+        # What each device counted on its own, for the comparison dashboard.
+        # The phone appears twice (Google Fit + Health Connect copies of the
+        # same sensor) — take the larger, never the sum.
+        per_device: Dict[str, int] = {}
+        for o, n in per_origin.items():
+            dev = device_of(o)
+            if dev:
+                per_device[dev] = max(per_device.get(dev, 0), n) if dev == "phone" else per_device.get(dev, 0) + n
+        out["device_steps"] = per_device
 
     def active_minutes():
         row = _daily_rollup(sess, "active-minutes", day).get("activeMinutes") or {}
@@ -315,6 +343,15 @@ def fetch_daily_summary(config: SyncConfig, day: date) -> Dict[str, Any]:
         out["sleep_segments"] = len(sel["night"])
         out["nap_min"] = sum(_asleep(p) for p in sel["naps"])
         out["sleep_source"] = sel["source"]
+        # Each device's own stitched night, for the comparison dashboard
+        # (the analysis uses only the preferred one).
+        per_dev_sleep: Dict[str, float] = {}
+        for src in {_sleep_source(p) for p in pts if p.get("sleep")}:
+            other = _select_night(pts, source=src)
+            if other:
+                dev = device_of(origin_of(other["main"])) or src
+                per_dev_sleep[dev] = round(_night_minutes(other["night"]), 1)
+        out["device_sleep_min"] = per_dev_sleep
         for p in pts:  # provenance for every device that reported, used or not
             o = origin_of(p)
             if o:

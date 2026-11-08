@@ -480,8 +480,11 @@ def send_advice_email(config: SyncConfig, advice: Dict[str, Any]) -> None:
         from .device_compare import _has_oura, compare_metrics, render_compare_email_html
 
         rows = compare_metrics(config, day)
-        steps_today = next((r["fitbit"] or 0 for r in rows if r["metric"] == "steps"), 0)
-        if rows and not _has_oura(rows) and steps_today < 500:
+        # The digest is built from today's PARTIAL file (07:40 snapshot) —
+        # a 500-step cutoff still let "Steps 709" through. Single-device days
+        # always show yesterday's finished day; the side-by-side dashboard
+        # below covers last night per device.
+        if rows and not _has_oura(rows):
             # 08:00 same-day file is an upload-lag stub ("Steps 12"); show
             # yesterday's finalized day instead — the number that informs
             # this morning. Two-device days keep the live comparison.
@@ -491,6 +494,18 @@ def send_advice_email(config: SyncConfig, advice: Dict[str, Any]) -> None:
             device_compare_html = render_compare_email_html(config, day)
     except Exception:
         device_compare_html = ""
+
+    # Three-wearable comparison (Fitbit Air vs Pebble vs Oura): coverage,
+    # each device's own night and steps, and how closely they agree.
+    device_dashboard_html = ""
+    try:
+        from datetime import date as _ddate
+
+        from .device_dashboard import render_email_html as _render_devices
+
+        device_dashboard_html = _render_devices(config, _ddate.fromisoformat(day))
+    except Exception as exc:
+        logging.getLogger("personal-doctor.email").warning(f"device dashboard skipped: {exc}")
 
     # Build action tracking buttons
     action_buttons_html = _build_action_buttons_html(config, advice_text, day)
@@ -535,6 +550,7 @@ def send_advice_email(config: SyncConfig, advice: Dict[str, Any]) -> None:
   {html_body}
   {biomarker_html}
   {device_compare_html}
+  {device_dashboard_html}
   {execution_dashboard_html}
   {research_html}
   {action_buttons_html}

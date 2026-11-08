@@ -381,6 +381,8 @@ def google_health_api_to_daily_payload(day: date, g: Dict[str, Any]) -> Dict[str
         "sleep_segments": int(g.get("sleep_segments") or 0),
         "nap_min": int(g.get("nap_min") or 0),
         "sleep_source": g.get("sleep_source") or "",
+        "device_steps": dict(g.get("device_steps") or {}),
+        "device_sleep_min": dict(g.get("device_sleep_min") or {}),
         "fetch_errors": list(g.get("errors") or []),
         "activity_is_previous_day": False,
     }
@@ -620,8 +622,8 @@ def watch_banner(config: SyncConfig, silence: Dict[str, Any], min_days: int = 3)
             "Fitbit Air: the cloud link is fine — the band itself has stopped "
             "uploading. Charge it, wear it, then open the Google Health (Fitbit) "
             "app and pull down to sync. Until then HRV, resting HR and SpO2 are "
-            "NOT measured, and sleep is the Pebble's estimate (it counts time "
-            "lying still, so it reads high)."
+            "NOT measured, and sleep is the Pebble's estimate (the device "
+            "comparison in the email shows how closely it tracks the Air)."
         )
     else:
         fitbit_fix = (

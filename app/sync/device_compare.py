@@ -283,12 +283,20 @@ def _sleep_source_caveat(config: SyncConfig, day: str) -> str:
     if not fb.get("sleep_hours") or src in ("", "fitbit"):
         return ""
     name = "Pebble" if "coredevices" in src else "a fallback Health Connect source"
+    # Cite the MEASURED gap, not a fixed claim: "~1 h high" (from September)
+    # stopped being true — 13 paired nights to 2026-11-07 were +3 min median.
+    from datetime import date as _date
+
+    from .device_dashboard import sleep_caveat_phrase
+
+    try:
+        measured = sleep_caveat_phrase(config, _date.fromisoformat(day))
+    except Exception:
+        measured = "it is a different instrument"
     return (
         f"- SLEEP SOURCE CAVEAT: last night comes from {name} because the Fitbit "
-        "Air recorded nothing. Treat the duration as an upper estimate (typically "
-        "~1 h high), ignore its stage split, and do not compare it with earlier "
-        "Fitbit Air nights as if it were the same instrument. HRV, resting HR and "
-        "SpO2 were not measured."
+        f"Air recorded nothing ({measured}). Ignore its stage split. HRV, resting "
+        "HR and SpO2 were not measured."
     )
 
 

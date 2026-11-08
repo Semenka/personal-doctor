@@ -326,7 +326,7 @@ def format_trend_section(
         )
 
     # Mixed instruments: when the Fitbit Air is silent the night comes from
-    # the Pebble, which reads ~1 h high. A sleep "trend" across both is partly
+    # the Pebble — a different instrument. A sleep "trend" across both is partly
     # a change of device, not of sleep — say so.
     recent = (history or [])[-7:] if history else []
     fallback = [h for h in recent if (h.get("sleep_hours") or 0)
@@ -334,9 +334,9 @@ def format_trend_section(
     if fallback:
         lines.append(
             f"(Sleep caveat: {len(fallback)} of the last {len(recent)} nights are "
-            "Pebble estimates (Fitbit Air silent) and read ~1 h high, with no "
-            "HRV / resting HR. Do not read a rise in average sleep across the "
-            "switch as real improvement.)"
+            "Pebble estimates (Fitbit Air silent): a different instrument, with no "
+            "HRV / resting HR. Do not read a change in average sleep across the "
+            "switch as a real change.)"
         )
 
     return "\n".join(lines)
