@@ -183,6 +183,16 @@ def _gather_context(
     except Exception:
         context["biomarker_trends"] = []
 
+    # Single lipid readings never reach the ≥2-reading trend list above, and
+    # never-measured Lp(a)/ApoB are invisible as gaps (LDL 169 on 2026-04-27
+    # was absent from every plan).
+    try:
+        from ..care.heart_risk import advisor_context_line
+
+        context["heart_risk"] = advisor_context_line(config, day)
+    except Exception:
+        context["heart_risk"] = ""
+
     context["device_compare_block"] = ""
 
     return context
@@ -558,6 +568,15 @@ def _build_prompt(context: Dict[str, Any]) -> str:
         )
         sections.append("\n".join(lines))
 
+    if context.get("heart_risk"):
+        sections.append(
+            "## ❤️ Heart risk (single readings and untested markers)\n\n"
+            + context["heart_risk"]
+            + "\nAt most once a week, when it fits the day, make the booking or the "
+            "doctor question the action (rule 22). Never suggest starting, stopping "
+            "or dosing a lipid drug."
+        )
+
     # ── Biomarker time-series trends (blood + spermogram) ──
     bm_trends = context.get("biomarker_trends", [])
     if bm_trends:
@@ -834,6 +853,18 @@ LDL/ApoB reduction (Kronenberg 2022 EAS consensus)
 20. Mediterranean diet primary prevention drops major CV events ~30% (Estruch 2018 \
 PREDIMED). Omega-3 EPA+DHA for hypertriglyceridemia (Skulas-Ray 2019 AHA).
 21. Residual inflammation independent of LDL is a lever (Ridker 2018 CANTOS Lancet).
+22. Know your Lp(a) (once in adulthood) and ask a clinician how low YOUR LDL should be \
+given family history and genetics, and whether a statin or PCSK9 inhibitor would help; \
+intensive LDL lowering regresses plaque (Nicholls 2016 GLAGOV JAMA; Kronenberg 2022 EAS).
+
+**Exposures and products:**
+23. Plastics: phthalate exposure is associated with poorer semen quality in observational \
+studies (Hauser 2006 Epidemiology). Low-cost swaps — glass/steel for hot food and drinks, \
+never microwave in plastic, filtered tap water — are reasonable; say the evidence is \
+associational and do not promise a semen-parameter effect.
+24. Never recommend unapproved or compounded peptides (e.g. BPC-157, melanotan II) or \
+research chemicals: human safety and efficacy data are missing and vial contents are \
+unverified. Prescription drugs (GLP-1, statins, PCSK9) appear only as "ask your doctor".
 
 ### Volume & variation rules (CRITICAL — past attempts with 5 actions led to 0% completion)
 The patient's data shows they complete **2 actions max on a good day**. Stop overloading them.

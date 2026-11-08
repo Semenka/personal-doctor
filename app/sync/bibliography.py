@@ -317,6 +317,20 @@ PAPERS: Dict[str, Paper] = {
         2022, "lp_a",
         "EAS consensus on Lp(a) measurement, risk, and emerging therapy.",
     ),
+    "nicholls_2016_glagov": Paper(
+        "nicholls_2016_glagov",
+        "Nicholls 2016 GLAGOV (JAMA)",
+        2016, "lipids",
+        "RCT: adding a PCSK9 inhibitor to statins lowered LDL further and "
+        "regressed coronary atheroma volume — 'lower is better' on imaging.",
+    ),
+    "hauser_2006_phthalates": Paper(
+        "hauser_2006_phthalates",
+        "Hauser 2006 Epidemiology (phthalates and semen quality)",
+        2006, "sperm",
+        "Observational: urinary phthalate metabolites associated with lower "
+        "semen quality — supports low-cost plastic-exposure swaps, not proof.",
+    ),
     "ference_2017_eas": Paper(
         "ference_2017_eas",
         "Ference 2017 EAS (Mendelian randomization)",

@@ -271,6 +271,16 @@ def render_care_summary(
     for s in STANDING_CARE:
         lines.append(f"- **{s['specialty']}** ({s['priority']} priority) — {s['why']}")
         lines.append(f"  ask for: *{s['question']}*  ·  {_doctolib_search(s['slug'])}")
+
+    try:
+        from .heart_risk import render_heart_risk
+
+        heart = render_heart_risk(config, today)
+    except Exception:
+        heart = ""
+    if heart:
+        lines.append("")
+        lines.append(heart.replace("## ", "### ", 1))
     return "\n".join(lines)
 
 
