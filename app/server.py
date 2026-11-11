@@ -36,6 +36,23 @@ logging.basicConfig(
 logger = logging.getLogger("personal-doctor")
 
 
+def ask_allowed(client_host: str, authorization: str) -> bool:
+    """Loopback callers always; anyone else needs the HEALTH_ASK_TOKEN bearer.
+
+    The server listens on all interfaces, and an answer contains health data
+    plus snippets of personal memory — so the LAN gets nothing unless a token
+    has been set on purpose.
+    """
+    import hmac
+
+    if (client_host or "") in ("127.0.0.1", "::1", "localhost"):
+        return True
+    token = os.getenv("HEALTH_ASK_TOKEN", "").strip()
+    return bool(token) and hmac.compare_digest(
+        (authorization or "").encode(), f"Bearer {token}".encode()
+    )
+
+
 def create_app() -> FastAPI:
     """Create FastAPI app with scheduler attached."""
     from app.sync.config import load_config
@@ -219,20 +236,10 @@ def create_app() -> FastAPI:
 
     # ── Open interface: ask the Health OS anything ──
     def _ask_allowed(request: Request) -> bool:
-        """Loopback callers always; anyone else needs the HEALTH_ASK_TOKEN bearer.
-
-        The server listens on all interfaces, and an answer contains health
-        data plus snippets of personal memory — so the LAN gets nothing unless
-        a token has been set on purpose.
-        """
-        import hmac
-
-        host = (request.client.host if request.client else "") or ""
-        if host in ("127.0.0.1", "::1", "localhost"):
-            return True
-        token = os.getenv("HEALTH_ASK_TOKEN", "").strip()
-        sent = request.headers.get("authorization", "")
-        return bool(token) and hmac.compare_digest(sent, f"Bearer {token}")
+        return ask_allowed(
+            request.client.host if request.client else "",
+            request.headers.get("authorization", ""),
+        )
 
     @dashboard_app.post("/ask")
     async def ask(request: Request, payload: dict):
@@ -772,10 +779,6 @@ Personal Doctor &bull; <a href="/advice" style="color:#2563eb;">Latest advice</a
 </body></html>"""
 
 
-if __name__ == "__main__":
-    start_server()
-
-
 _ASK_PAGE = """<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Ask the Health OS</title>
 <style>body{font-family:-apple-system,sans-serif;max-width:680px;margin:0 auto;padding:20px;color:#1a1a1a}
@@ -795,3 +798,7 @@ $("a").textContent=d.answer||d.error||"(no answer)";
 if(d.gbrain_hits)$("s").textContent="memory notes used: "+d.gbrain_hits;}
 catch(e){$("a").textContent="Request failed: "+e;}$("b").disabled=false;};
 </script></body></html>"""
+
+
+if __name__ == "__main__":
+    start_server()

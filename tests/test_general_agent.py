@@ -294,3 +294,15 @@ def test_openalex_tolerates_a_missing_source():
     assert ((item.get("primary_location") or {}).get("source") or {}) == {}
     src = Path(__file__).resolve().parents[1] / "app" / "research" / "openalex.py"
     assert 'item.get("primary_location", {}).get("source", {})' not in src.read_text()
+
+
+def test_ask_is_loopback_or_token_only(monkeypatch):
+    from app import server
+
+    monkeypatch.delenv("HEALTH_ASK_TOKEN", raising=False)
+    assert server.ask_allowed("127.0.0.1", "") and server.ask_allowed("::1", "")
+    assert not server.ask_allowed("192.168.1.50", "") and not server.ask_allowed("", "Bearer ")
+    monkeypatch.setenv("HEALTH_ASK_TOKEN", "s3cret-test")
+    assert not server.ask_allowed("192.168.1.50", "Bearer wrong")
+    assert server.ask_allowed("192.168.1.50", "Bearer s3cret-test")
+    assert "Ask the Health OS" in server._ASK_PAGE
