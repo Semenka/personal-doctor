@@ -156,6 +156,7 @@ def save_new_report(
     filename: str,
     drive_file_id: str,
     summary: Optional[Dict[str, Any]],
+    note: str = "",
 ) -> Path:
     """Record that a new report was ingested on this day.
 
@@ -183,6 +184,8 @@ def save_new_report(
         entry["severity"] = summary.get("severity")
         entry["specialist_referral"] = summary.get("specialist_referral", False)
         entry["follow_ups"] = summary.get("follow_ups", [])
+    if note:
+        entry["note"] = note
     existing.append(entry)
     path.write_text(json.dumps(existing, indent=2, ensure_ascii=False))
     return path

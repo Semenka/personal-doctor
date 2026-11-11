@@ -136,3 +136,21 @@ def resolve_kind(
         if not scores and len({m.lower() for m in _MEDICAL_SIGNAL.findall(text[:6000])}) < 2:
             return "unclassified"
     return folder_kind
+
+
+def settle_unreadable(folder_kind: str, readings_found: int) -> tuple:
+    """Kind and note for a file with no extractable text.
+
+    ``readings_found`` is how many biomarker values a vision pass read from it
+    (0 for a scanned PDF, which gets no vision pass). With values it is the
+    lab result its folder says it is. Without, nothing shows it is one — it is
+    kept as ``unclassified`` with a note naming the folder default, so it is
+    never counted as a test that happened.
+    """
+    if readings_found > 0:
+        return folder_kind, ""
+    return "unclassified", (
+        f"No readable content (photo or scan without text, no lab values found); "
+        f"the folder default was {folder_kind}. Not treated as a result — "
+        f"open the file to check what it is."
+    )

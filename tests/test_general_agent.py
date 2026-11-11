@@ -306,3 +306,72 @@ def test_ask_is_loopback_or_token_only(monkeypatch):
     assert not server.ask_allowed("192.168.1.50", "Bearer wrong")
     assert server.ask_allowed("192.168.1.50", "Bearer s3cret-test")
     assert "Ask the Health OS" in server._ASK_PAGE
+
+
+# ── 8. Data hygiene: misfiled files, thousands separators, andrology text ──
+
+def test_french_thousands_separator_is_one_number():
+    from app.sync.biomarker_extractor import extract_biomarkers_heuristic
+
+    text = (
+        "Numération des spermatozoïdes : 174,61 Millions/mL\n"
+        "Numération totale des spermatozoïdes : 1 414,34 Millions\n"
+    )
+    got = {r.biomarker_id: r.value for r in extract_biomarkers_heuristic(text, "sperm_test", draw_date="2026-05-22")}
+    assert got.get("sperm_total_count") == 1414.34
+    assert got.get("sperm_concentration") == 174.61
+
+
+def test_file_without_text_is_a_result_only_if_values_were_read():
+    from app.sync.report_types import settle_unreadable
+
+    assert settle_unreadable("sperm_test", 3) == ("sperm_test", "")
+    kind, note = settle_unreadable("sperm_test", 0)
+    assert kind == "unclassified" and "sperm_test" in note
+
+
+def _semen_rows(tmp_path, rows):
+    d = tmp_path / "biomarkers"
+    d.mkdir(parents=True, exist_ok=True)
+    with (d / "results.jsonl").open("w") as fh:
+        for mid, value, when in rows:
+            fh.write(json.dumps({"biomarker_id": mid, "value": value, "date": when, "unit": ""}) + "\n")
+
+
+def test_andrology_text_says_low_only_about_what_is_low(tmp_path):
+    from app.care import providers
+
+    _semen_rows(tmp_path, [
+        ("sperm_total_count", 12.0, "2025-01-10"),       # an older low count must not leak in
+        ("sperm_total_count", 231.85, "2026-08-01"),
+        ("sperm_concentration", 45.46, "2026-08-01"),
+        ("sperm_total_motility", 10.0, "2026-08-01"),
+        ("sperm_progressive_motility", 8.0, "2026-08-01"),
+    ])
+    why = providers._andrology_why(_cfg(tmp_path))
+    below, within = why.split("Within reference")
+    assert "2026-08-01" in why
+    assert "motility 10" in below and "motility 8" in below
+    assert "count" not in below and "231.85" in within and "45.46" in within
+    assert "severely" not in why
+
+
+def test_andrology_text_without_a_spermogram_is_none(tmp_path):
+    from app.care import providers
+
+    assert providers._andrology_why(_cfg(tmp_path)) is None
+
+
+def test_agent_lists_medical_reports_not_stray_files(tmp_path):
+    from app.sync.report_summarizer import save_new_report
+
+    cfg = _cfg(tmp_path)
+    save_new_report(cfg, date(2026, 10, 9), "unclassified", "IMG-WA0000.jpg", "a", None, note="No readable content")
+    save_new_report(cfg, date(2026, 9, 12), "unclassified", "IMG-WA0003.jpg", "b", None)
+    save_new_report(cfg, date(2026, 8, 8), "sperm_test", "spermogramme.pdf", "c",
+                    {"summary": "Motility 10 %, count 231.85 M."})
+    text = health_agent._recent_reports(cfg)
+    assert "spermogramme.pdf" in text and "Motility 10 %" in text
+    assert "IMG-WA" not in text and "2 other file(s)" in text
+    stored = json.loads((tmp_path / "new_reports" / "2026-10-09.json").read_text())
+    assert stored[0]["note"] == "No readable content"

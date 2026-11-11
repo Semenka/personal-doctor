@@ -419,7 +419,9 @@ def extract_biomarkers_via_gemini(
 # Match: "Testosterone totale: 612.4 ng/dL (ref 264-916)"
 _HEURISTIC_LINE = re.compile(
     r"^([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9 \-/().]{2,60}?)\s*[:=]?\s+"
-    r"([0-9]+(?:[.,][0-9]+)?)"
+    # "1 414,34" — French labs group thousands with a (non-breaking) space.
+    # Without this the total count of 1 414,34 M was stored as 1.0 M ("low").
+    r"([0-9]{1,3}(?:[ \u00a0\u202f][0-9]{3})+(?:[.,][0-9]+)?|[0-9]+(?:[.,][0-9]+)?)"
     r"\s*([%A-Za-zµμ/]+)?",
     re.MULTILINE,
 )
@@ -459,7 +461,7 @@ def extract_biomarkers_heuristic(
         if marker.id in seen:
             continue
         try:
-            value = float(val_str.replace(",", "."))
+            value = float(re.sub(r"[ \u00a0\u202f]", "", val_str).replace(",", "."))
         except ValueError:
             continue
         value, unit, _, _ = _to_canonical(marker.id, value, unit.strip() or marker.unit)

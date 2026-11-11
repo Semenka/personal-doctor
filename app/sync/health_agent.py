@@ -144,21 +144,46 @@ def _biomarkers(config: SyncConfig) -> str:
 
 
 def _recent_reports(config: SyncConfig, limit: int = 6) -> str:
+    """The newest ingested medical reports, newest first.
+
+    Files the Drive scan could not identify as medical (``unclassified``:
+    tickets, bank transfers, unreadable photos) are counted, not listed — they
+    used to crowd the real reports out and read as "spermogram reports with no
+    results".
+    """
     base = config.data_dir / "new_reports"
     if not base.exists():
         return ""
     lines: List[str] = []
-    for path in sorted(base.glob("*.json"), reverse=True)[:6]:
-        for rep in json.loads(path.read_text()):
+    skipped = 0
+    for path in sorted(base.glob("*.json"), reverse=True)[:60]:
+        if len(lines) >= limit:
+            break
+        try:
+            reports = json.loads(path.read_text())
+        except Exception:  # noqa: BLE001
+            continue
+        for rep in reports:
+            if rep.get("kind") == "unclassified":
+                skipped += 1
+                continue
+            if len(lines) >= limit:
+                break
             flags = "; ".join(str(f) for f in (rep.get("flags") or [])[:4])
+            summary = str(rep.get("summary", "")).strip()[:400] or str(
+                rep.get("note") or "no summary stored for this file"
+            )
             lines.append(
                 f"- {path.stem} · {rep.get('kind', 'report')}"
                 + (f" [{rep['severity']}]" if rep.get("severity") else "")
-                + f": {str(rep.get('summary', '')).strip()[:400]}"
+                + f" ({rep.get('filename', '')}): {summary}"
                 + (f" Flags: {flags}" if flags else "")
             )
-            if len(lines) >= limit:
-                return "\n".join(lines)
+    if skipped:
+        lines.append(
+            f"({skipped} other file(s) in the Drive folder were not medical reports "
+            "or could not be read, and are ignored.)"
+        )
     return "\n".join(lines)
 
 

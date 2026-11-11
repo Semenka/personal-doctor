@@ -123,11 +123,15 @@ STANDING_CARE: List[Dict[str, str]] = [
         "slug": "urologue",
         "question": "Consultation d'andrologie — infertilité masculine, "
                     "bilan et prise en charge",
-        "why": "Sperm count, motility, morphology and vitality are all severely "
-               "below WHO 2021 references and declining. Self-directed "
+        # Fallback only — render_care_summary replaces the first sentence with
+        # what the latest spermogram actually shows (see _andrology_why). The
+        # old fixed text claimed the *count* was severely low while the lab
+        # reported 231.85 M (reference >= 39).
+        "why": "No spermogram values on file to judge from. Self-directed "
                "supplementation has a ceiling; a specialist can order a "
                "varicocele ultrasound, karyotype/Y-microdeletion testing and "
                "hormonal workup that change management.",
+        "why_from": "semen",
         "priority": "high",
     },
     {
@@ -140,6 +144,59 @@ STANDING_CARE: List[Dict[str, str]] = [
         "priority": "medium",
     },
 ]
+
+
+_SEMEN_MARKERS = (
+    "sperm_concentration", "sperm_total_count", "sperm_progressive_motility",
+    "sperm_total_motility", "sperm_normal_morphology", "sperm_vitality",
+)
+_ANDROLOGY_TAIL = (
+    "Self-directed supplementation has a ceiling; a specialist can order a "
+    "varicocele ultrasound, karyotype/Y-microdeletion testing and hormonal "
+    "workup that change management."
+)
+
+
+def _andrology_why(config: SyncConfig) -> Optional[str]:
+    """Why an andrology consult is worth having, from the latest spermogram.
+
+    Each parameter is compared with its WHO 2021 lower reference, so the text
+    can only say "below reference" about values that are. None when there is
+    no spermogram on file.
+    """
+    from ..sync.biomarker_trends import series
+    from ..sync.biomarkers import BY_ID
+
+    latest: Dict[str, Any] = {}
+    for mid in _SEMEN_MARKERS:
+        pts = series(config, mid)
+        if pts:
+            latest[mid] = pts[-1]
+    if not latest:
+        return None
+    when = max(p.date for p in latest.values())
+    below: List[str] = []
+    within: List[str] = []
+    for mid in _SEMEN_MARKERS:
+        p = latest.get(mid)
+        marker = BY_ID.get(mid)
+        if p is None or marker is None or p.date != when or marker.ref_low is None:
+            continue
+        label = f"{marker.name_en.lower()} {p.value:g} {marker.unit}".strip()
+        (below if p.value < marker.ref_low else within).append(
+            f"{label} (ref ≥ {marker.ref_low:g})"
+        )
+    if not below and not within:
+        return None
+    parts = [f"Latest spermogram ({when}):"]
+    if below:
+        parts.append("below the WHO 2021 reference — " + ", ".join(below) + ".")
+    if within:
+        parts.append("Within reference — " + ", ".join(within) + ".")
+    if not below:
+        parts.append("Nothing is below reference; keep the consult only if conception is delayed.")
+        return " ".join(parts)
+    return " ".join(parts) + " " + _ANDROLOGY_TAIL
 
 
 def _care_dir(config: SyncConfig) -> Path:
@@ -269,7 +326,13 @@ def render_care_summary(
     lines.append("")
     lines.append("### Worth having on the books")
     for s in STANDING_CARE:
-        lines.append(f"- **{s['specialty']}** ({s['priority']} priority) — {s['why']}")
+        why = s["why"]
+        if s.get("why_from") == "semen":
+            try:
+                why = _andrology_why(config) or why
+            except Exception:  # noqa: BLE001 — the summary must still render
+                pass
+        lines.append(f"- **{s['specialty']}** ({s['priority']} priority) — {why}")
         lines.append(f"  ask for: *{s['question']}*  ·  {_doctolib_search(s['slug'])}")
 
     try:

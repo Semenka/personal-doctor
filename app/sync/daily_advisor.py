@@ -153,7 +153,11 @@ def _gather_context(
     try:
         from .report_summarizer import load_new_reports_for_day
 
-        context["new_reports"] = load_new_reports_for_day(config, day)
+        # Files the Drive scan could not identify as medical are not "new reports".
+        context["new_reports"] = [
+            r for r in load_new_reports_for_day(config, day)
+            if r.get("kind") != "unclassified"
+        ]
     except Exception:
         context["new_reports"] = []
 

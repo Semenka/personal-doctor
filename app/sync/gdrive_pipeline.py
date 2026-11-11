@@ -17,11 +17,18 @@ from .connectors.gdrive import (
     list_files_recursive,
 )
 from .pdf_extract import extract_pdf_text
-from .report_types import classify_report, resolve_kind
+from .report_types import classify_report, resolve_kind, settle_unreadable
+
 from .storage import (
     init_db,
     save_lab_document_db,
     write_lab_document_json,
+)
+
+# Kinds whose records are read as lab results downstream (biomarkers, check-up
+# reconciliation, the advisor's "new report" banner).
+_LAB_KINDS = (
+    "blood_test", "urine_test", "sperm_test", "hormone_panel", "health_check",
 )
 
 PROCESSABLE_MIMES = {
@@ -216,6 +223,33 @@ def sync_drive_reports(
             name, raw_text, override=report_type_override,
             folder_kind=external_kind or subfolder_kind,
         )
+        # A file with no extractable text (a photo, a scan) used to be filed
+        # under the folder default on trust: a car registration, two bank
+        # transfers, a school timetable and a child's prescription all became
+        # "sperm tests" with no results in them. Now a photo is read with
+        # vision first; whatever still yields nothing is kept as unclassified
+        # and flagged unreadable instead of posing as a lab result.
+        vision_readings: List[Any] = []
+        report_note = ""
+        if not raw_text.strip() and kind in _LAB_KINDS and not report_type_override:
+            if mime.startswith("image/"):
+                try:
+                    from .biomarker_extractor import extract_image_and_save
+
+                    vision_readings = extract_image_and_save(
+                        config, local_path, source_kind=kind,
+                        source_file=name, draw_date=day.isoformat(),
+                    ) or []
+                except Exception as exc:
+                    print(f"  Vision extraction failed for {name}: {exc}")
+            kind, report_note = settle_unreadable(kind, len(vision_readings))
+            if vision_readings:
+                metadata["biomarker_count"] = len(vision_readings)
+                metadata["biomarkers"] = [r.biomarker_id for r in vision_readings]
+                metadata["extracted_via"] = "vision"
+            else:
+                metadata["unreadable"] = True
+                metadata["note"] = report_note
         metadata["kind"] = kind
 
         # AI-summarize the report text (M2). Best-effort; non-blocking on failure.
@@ -270,7 +304,7 @@ def sync_drive_reports(
         try:
             from .report_summarizer import save_new_report
 
-            save_new_report(config, day, kind, name, file_id, summary)
+            save_new_report(config, day, kind, name, file_id, summary, note=report_note)
         except Exception as exc:
             print(f"  save_new_report failed for {name}: {exc}")
 
