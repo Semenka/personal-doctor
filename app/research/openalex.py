@@ -71,7 +71,7 @@ def fetch_top_papers(
             if not work_id or work_id in seen:
                 continue
             seen.add(work_id)
-            source = item.get("primary_location", {}).get("source", {})
+            source = ((item.get("primary_location") or {}).get("source") or {})
             papers.append(
                 ResearchPaper(
                     work_id=work_id,

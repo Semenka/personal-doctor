@@ -127,67 +127,18 @@ def _handle_move_to_evening(config: SyncConfig) -> str:
 
 # ── Free-text Q&A (I2) ──────────────────────────────────────────────────
 def _qa_answer(config: SyncConfig, day: str, question: str) -> str:
-    """Answer a free-text question with today's advice + Oura + action history.
+    """Answer a free-text question through the Health OS agent.
 
-    Routes through llm_client (Codex GPT-5.5 by default) — no longer tied to
-    the revoked Gemini key.
+    The agent sees the watches, plan, anomalies, labs, reports, care and
+    claims, plus what gbrain (read-only) holds on the subject.
     """
-    from .llm_client import generate as llm_generate
-    from .llm_client import has_credentials
+    from .health_agent import answer
 
-    if not has_credentials():
-        return ("Q&A is offline (no LLM credentials). For quick replies use "
-                "'1', '2', 'done', 'skip', or 'swap backup for X'.")
-
-    # Gather context: today's advice + Fitbit Air + action state
-    advice_text = ""
-    advisor_file = config.data_dir / "advisor" / f"daily_advice_{day}.json"
-    if advisor_file.exists():
-        try:
-            advice_text = json.loads(advisor_file.read_text()).get("advice", "")[:4000]
-        except Exception:
-            pass
-
-    wearable_text = ""
-    wearable_file = config.data_dir / f"fitbit_{day}.json"
-    if wearable_file.exists():
-        try:
-            wearable_text = wearable_file.read_text()[:2000]
-        except Exception:
-            pass
-
-    actions = _today_actions(config, day)
-    action_summary = "\n".join(
-        f"- {'[DONE]' if a.get('done') else '[OPEN]'} {a.get('title', '?')}"
-        for a in actions
-    )
-
-    system = (
-        "You are the user's personal health advisor. They are texting you via "
-        "WhatsApp with a short question. Context you have: today's full daily "
-        "plan, today's Fitbit Air data, and their action completion state. "
-        "Answer in 1-3 sentences. Be direct. Cite today's data. "
-        "No disclaimers. No 'consult your doctor'. "
-        "If a fact isn't in the context, say so briefly."
-    )
-    user = (
-        f"Today ({day}) daily plan:\n{advice_text}\n\n"
-        f"Today's Fitbit Air:\n{wearable_text}\n\n"
-        f"Actions state:\n{action_summary}\n\n"
-        f"User question: {question}"
-    )
     try:
-        answer = llm_generate(
-            system=system,
-            user=user,
-            max_output_tokens=400,
-            reasoning="low",
-            timeout_s=180,
-        )
-        return answer.strip() or "(no response from model)"
-    except Exception as exc:
-        logger.warning(f"Q&A LLM call failed: {exc}")
-        return f"Q&A failed: {exc}"
+        today = date.fromisoformat(day)
+    except ValueError:
+        today = None
+    return answer(config, question, today=today)["answer"]
 
 
 # ── Main entry ──────────────────────────────────────────────────────────

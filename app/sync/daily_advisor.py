@@ -141,6 +141,14 @@ def _gather_context(
     except Exception:
         context["research"] = []
 
+    # Anomalies in the watch data, with researched corrective actions (07:41 job)
+    try:
+        from .anomaly_research import advisor_section
+
+        context["anomalies"] = advisor_section(config, day)
+    except Exception:
+        context["anomalies"] = ""
+
     # Newly ingested reports (M1) — for today's banner
     try:
         from .report_summarizer import load_new_reports_for_day
@@ -519,6 +527,10 @@ def _build_prompt(context: Dict[str, Any]) -> str:
             deny_section += f"- **{title}** (skipped {skips} days in a row)\n"
         sections.append(deny_section)
 
+    # ── Anomalies + researched corrective action ──
+    if context.get("anomalies"):
+        sections.append(context["anomalies"])
+
     # ── Fresh research papers (R2) ──
     research = context.get("research", [])
     if research:
@@ -564,7 +576,7 @@ def _build_prompt(context: Dict[str, Any]) -> str:
                 lines.append("  Flagged values: " + "; ".join(flags[:4]))
         lines.append(
             "\nOpen today's plan with a brief acknowledgement of the new report(s) "
-            "and adapt the priority action to address the most important finding."
+            "and adapt action #1 to address the most important finding."
         )
         sections.append("\n".join(lines))
 
@@ -589,8 +601,8 @@ def _build_prompt(context: Dict[str, Any]) -> str:
             "patient sees the data, not just the recommendation.",
             "",
             "**For any marker flagged [low] or [high], the suggested protocols "
-            "list below is an evidence-cited menu. Your Priority or Backup "
-            "action MUST be drawn from those protocols when applicable, and "
+            "list below is an evidence-cited menu. One of your Top 3 "
+            "actions MUST be drawn from those protocols when applicable, and "
             "the Why field MUST cite the same paper. If multiple markers point "
             "to the same intervention (e.g. antioxidant stack helps both "
             "motility and DFI), prefer that overlap.**",
@@ -702,7 +714,7 @@ def _build_prompt(context: Dict[str, Any]) -> str:
         sections.append(
             "## Mode: WEEKEND (lighter plan)\n"
             "Friday/Saturday have historically had 0% completion. Respond with "
-            "ONE priority action only and skip the 3 micro-actions."
+            "Still give the Top 3, but every action must be [Easy] and under 10 minutes."
         )
 
     return "\n\n".join(sections)
@@ -866,24 +878,27 @@ associational and do not promise a semen-parameter effect.
 research chemicals: human safety and efficacy data are missing and vial contents are \
 unverified. Prescription drugs (GLP-1, statins, PCSK9) appear only as "ask your doctor".
 
-### Volume & variation rules (CRITICAL — past attempts with 5 actions led to 0% completion)
-The patient's data shows they complete **2 actions max on a good day**. Stop overloading them.
+### Volume & variation rules (CRITICAL)
+Every day of the week, output exactly **THREE actions — the "Top 3 for today"** — ranked \
+by expected impact on today's data. Not five, not a menu: past plans with 5 actions had 0% \
+completion, so each of the three must be small enough to actually happen.
 
-Each weekday, output exactly:
-- **1 PRIORITY action** — the most important thing they should do today
-- **1 BACKUP action** — a different category, same day
-- **3 MICRO-WINS** — 2-minute actions they can stack into their existing routine
-
-On Friday/Saturday (WEEKEND mode, signaled in the input), output only the 1 priority action \
-and skip micro-wins. Weekend completion has historically been 0%; keep it minimal.
+Each action is tagged with the goal it serves — **Energy**, **Fertility** or **Both**:
+- At least one action must target Energy and at least one must target Fertility.
+- The three actions must come from three different categories.
+- If the input contains an "Anomalies" section, action #1 is the corrective action for the \
+most severe anomaly (use the researched action and its evidence; adapt the timing).
+- If a new medical report is flagged in the input, one action must respond to it.
+- On Friday/Saturday (WEEKEND mode, signaled in the input) still give three, but all three \
+must be [Easy] and take under 10 minutes each.
 
 Variation requirements:
-1. The PRIORITY action must be DIFFERENT from yesterday's priority (check action history).
+1. Action #1 must be DIFFERENT from yesterday's #1 (check action history), unless it is the \
+corrective action for an anomaly that persists.
 2. Respect the "DO NOT RECOMMEND TODAY" list in the input — those titles have been skipped \
 3+ consecutive days and are dead to us.
 3. Balance categories across days: supplement, movement, sleep/recovery, stress, nutrition.
-4. Rotate: never recommend the exact same priority two days in a row, and never the same \
-pair of priority+backup.
+4. Never repeat the same set of three two days in a row.
 
 ### Feedback loop instructions (mandatory)
 You receive:
@@ -905,7 +920,7 @@ skip this line entirely — do not mention zero completions, do not shame, do no
 ### 7-Day trend context
 You also receive 7-day rolling averages and trend directions. Use these to:
 1. Call out one clear improving or declining pattern (max 1 sentence).
-2. Tie today's priority action to that pattern when possible.
+2. Tie action #1 to that pattern when possible.
 
 ### Output format (STRICT)
 
@@ -914,29 +929,23 @@ You also receive 7-day rolling averages and trend directions. Use these to:
 ### Progress
 (1 line max. Last completed action + date. Skip entirely if none in the past 7 days.)
 
-### Priority (do this one thing)
+### Top 3 for today
 
-1. **[Title]** [Easy/Medium/Hard] | Category: [Supplement/Movement/Sleep/Stress/Nutrition]
+1. **[Title]** [Easy/Medium/Hard] | Goal: [Energy/Fertility/Both] | Category: [Supplement/Movement/Sleep/Stress/Nutrition]
    **When:** Exact time window
    **Steps:**
    a) Specific step with exact dosage/duration
    b) Second step
-   **Why:** 1–2 sentences. Include a citation (author year) AND, if computed effects exist, \
-cite the number from the input exactly.
+   **Why:** 1–2 sentences: how this raises energy or fertility for HIM today. Include a \
+citation (author year) AND, if computed effects exist, cite the number from the input exactly.
    **Expected effect:** What to notice and when.
    *Quick alt (2 min):* Minimal version.
 
-### Backup (if priority won't happen)
+2. **[Title]** [Easy/Medium/Hard] | Goal: [...] | Category: [different from #1]
+   (same structure)
 
-2. **[Title]** [Easy/Medium/Hard] | Category: [different from priority]
-   (same structure as above)
-
-### 3 Micro-wins (each < 2 min — stack into existing habits)
-(SKIP this whole section on Friday/Saturday if weekend_mode is active.)
-
-- **[Micro-win 1]** — one-sentence how, tied to existing trigger (e.g., "After first coffee: …")
-- **[Micro-win 2]** — one-sentence how
-- **[Micro-win 3]** — one-sentence how
+3. **[Title]** [Easy/Medium/Hard] | Goal: [...] | Category: [different from #1 and #2]
+   (same structure)
 
 ### One metric to watch today
 Single line: the one Fitbit Air number to check tonight, with the target range.
@@ -948,11 +957,12 @@ One concrete thing, tied to today's data.
 One sentence only. Days since last sperm test (if known), or next test reminder.
 
 HARD LIMITS:
-- Total response under 600 words.
+- Total response under 700 words.
+- Exactly three numbered actions; no other numbered lists anywhere in the response.
 - Never mention "0/N completed" or "you skipped".
 - Never use the word "streak" unless the current streak is > 0.
 - Never recommend anything from the DO NOT RECOMMEND TODAY list.
-- The patient is a tired human with 2 actions/day of capacity. Write for that human."""
+- The patient is a tired human. Three small, concrete actions beat one ambitious one."""
 
 
 def generate_daily_advice(
@@ -981,7 +991,7 @@ def generate_daily_advice(
         system=system,
         user=user_message,
         model=model,
-        max_output_tokens=1800,
+        max_output_tokens=2200,
         reasoning="high",
         timeout_s=600,
     )

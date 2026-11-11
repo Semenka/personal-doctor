@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Optional
 
 import uvicorn
-from fastapi import FastAPI, Form
+from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 # Configure logging to both stdout and file
@@ -217,9 +217,48 @@ def create_app() -> FastAPI:
         summary = load_summary(config.data_dir)
         return JSONResponse(summary or {"error": "no genetic summary"})
 
+    # ── Open interface: ask the Health OS anything ──
+    def _ask_allowed(request: Request) -> bool:
+        """Loopback callers always; anyone else needs the HEALTH_ASK_TOKEN bearer.
+
+        The server listens on all interfaces, and an answer contains health
+        data plus snippets of personal memory — so the LAN gets nothing unless
+        a token has been set on purpose.
+        """
+        import hmac
+
+        host = (request.client.host if request.client else "") or ""
+        if host in ("127.0.0.1", "::1", "localhost"):
+            return True
+        token = os.getenv("HEALTH_ASK_TOKEN", "").strip()
+        sent = request.headers.get("authorization", "")
+        return bool(token) and hmac.compare_digest(sent, f"Bearer {token}")
+
+    @dashboard_app.post("/ask")
+    async def ask(request: Request, payload: dict):
+        """{"question": "...", "use_memory": true} → {"answer", "gbrain_hits", "sources"}."""
+        if not _ask_allowed(request):
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        question = str((payload or {}).get("question") or "").strip()
+        if not question:
+            return JSONResponse({"error": "question is required"}, status_code=400)
+        from starlette.concurrency import run_in_threadpool
+
+        from app.sync.health_agent import answer
+
+        use_memory = bool((payload or {}).get("use_memory", True))
+        result = await run_in_threadpool(answer, config, question, None, use_memory)
+        return JSONResponse(result)
+
+    @dashboard_app.get("/ask")
+    async def ask_page(request: Request):
+        if not _ask_allowed(request):
+            return HTMLResponse("forbidden", status_code=403)
+        return HTMLResponse(_ASK_PAGE)
+
     # ── WhatsApp inbound webhook (I1, I2, I3) ──
     @dashboard_app.post("/whatsapp/inbound")
-    async def whatsapp_inbound(payload: dict):
+    async def whatsapp_inbound(request: Request, payload: dict):
         """Receive a user WhatsApp reply and return the response string.
 
         Called by the OpenClaw personal-doctor agent (which binds the WhatsApp
@@ -227,11 +266,17 @@ def create_app() -> FastAPI:
         Expected JSON shape: {"from": "+393491913903", "body": "1"}.
         Reply shape: {"reply": "✅ Marked #1 done: ..."}.
         """
+        from starlette.concurrency import run_in_threadpool
+
         from app.sync.whatsapp_inbound import handle_inbound_message
 
+        # Free text is answered by the health agent (health data + memory):
+        # same rule as /ask — local callers (OpenClaw) or the bearer token.
+        if not _ask_allowed(request):
+            return JSONResponse({"error": "forbidden"}, status_code=403)
         body = (payload or {}).get("body", "") or ""
         from_number = (payload or {}).get("from", "") or None
-        reply = handle_inbound_message(config, body, from_number=from_number)
+        reply = await run_in_threadpool(handle_inbound_message, config, body, from_number)
         return JSONResponse({"reply": reply})
 
     @dashboard_app.get("/actions")
@@ -729,3 +774,24 @@ Personal Doctor &bull; <a href="/advice" style="color:#2563eb;">Latest advice</a
 
 if __name__ == "__main__":
     start_server()
+
+
+_ASK_PAGE = """<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Ask the Health OS</title>
+<style>body{font-family:-apple-system,sans-serif;max-width:680px;margin:0 auto;padding:20px;color:#1a1a1a}
+textarea{width:100%;height:90px;font:inherit;padding:8px;box-sizing:border-box}
+button{font:inherit;padding:8px 16px;margin-top:8px}#a{white-space:pre-wrap;margin-top:18px;line-height:1.45}
+small{color:#666}</style></head><body><h2>Ask the Health OS</h2>
+<textarea id="q" placeholder="Why was my HRV low this week?"></textarea><br>
+<label><input type="checkbox" id="m" checked> use my memory (gbrain)</label><br>
+<button id="b">Ask</button><div id="a"></div><small id="s"></small>
+<script>
+const $=id=>document.getElementById(id);
+$("b").onclick=async()=>{const q=$("q").value.trim();if(!q)return;
+$("b").disabled=true;$("a").textContent="Checking your data and memory… (about 30 s)";$("s").textContent="";
+try{const r=await fetch("/ask",{method:"POST",headers:{"Content-Type":"application/json"},
+body:JSON.stringify({question:q,use_memory:$("m").checked})});const d=await r.json();
+$("a").textContent=d.answer||d.error||"(no answer)";
+if(d.gbrain_hits)$("s").textContent="memory notes used: "+d.gbrain_hits;}
+catch(e){$("a").textContent="Request failed: "+e;}$("b").disabled=false;};
+</script></body></html>"""

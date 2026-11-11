@@ -101,3 +101,41 @@ def fetch_papers_for_query(
             )
         )
     return papers
+
+
+EFETCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+
+
+def fetch_abstracts(
+    pmids: List[str], mailto: Optional[str] = None, max_chars: int = 1500
+) -> dict:
+    """Abstract text by PMID (``{pmid: text}``), trimmed to ``max_chars``.
+
+    Titles alone invite the model to guess what a paper found; the abstract
+    lets a recommendation quote the actual result. Missing abstracts are
+    simply absent from the returned dict.
+    """
+    import xml.etree.ElementTree as ET
+
+    pmids = [p for p in pmids if p]
+    if not pmids:
+        return {}
+    params = {"db": "pubmed", "id": ",".join(pmids), "retmode": "xml", "rettype": "abstract"}
+    if mailto:
+        params["email"] = mailto
+        params["tool"] = "personal-doctor"
+    r = requests.get(EFETCH_URL, params=params, timeout=25)
+    r.raise_for_status()
+    out: dict = {}
+    for article in ET.fromstring(r.content).iter("PubmedArticle"):
+        pmid = (article.findtext(".//MedlineCitation/PMID") or "").strip()
+        parts = []
+        for node in article.iter("AbstractText"):
+            text = " ".join("".join(node.itertext()).split())
+            if not text:
+                continue
+            label = node.get("Label")
+            parts.append(f"{label}: {text}" if label else text)
+        if pmid and parts:
+            out[pmid] = " ".join(parts)[:max_chars]
+    return out

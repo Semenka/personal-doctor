@@ -78,3 +78,61 @@ def classify_report(filename: str, text_content: Optional[str] = None) -> Option
             return max(scores, key=scores.get)
 
     return None
+
+
+# Words that show a document is medical at all (EN + FR, the languages of the
+# user's labs). Used only to stop a folder's default type from being stamped
+# on something that is plainly not a medical report.
+_MEDICAL_SIGNAL = re.compile(
+    r"\b(laborato\w+|patient\w*|sperm\w*|semen|biolog\w+|m[ée]dec\w+|medical\w*|m[ée]dical\w*"
+    r"|clini\w+|docteur|doctor|physician|pr[ée]l[èe]vement|specimen|sample"
+    r"|r[ée]sultats?|results?|reference range|valeurs? de r[ée]f[ée]rence|diagnos\w+"
+    r"|hormon\w+|testost[ée]ron\w*|h[ée]mo\w+|mmol/l|mg/dl|ng/ml|ui/l|iu/l|g/l"
+    r"|ordonnance|prescri\w+|posologie|analyse\w*|examen\w*|radiolog\w+|[ée]chograph\w+"
+    r"|пациент\w*|лаборатор\w*|результат\w*|анализ\w*|спермограмм\w*|генетическ\w*"
+    r"|референсн\w*|исследован\w*|врач\w*|диагноз\w*)\b",
+    re.IGNORECASE,
+)
+_MIN_TEXT_FOR_CONTENT_CHECK = 200
+
+
+def _text_scores(text: str) -> dict:
+    scores = {}
+    for report_type, pattern in _PATTERNS.items():
+        n = len(pattern.findall(text[:6000]))
+        if n:
+            scores[report_type] = n
+    return scores
+
+
+def resolve_kind(
+    filename: str,
+    text_content: Optional[str] = None,
+    override: Optional[str] = None,
+    folder_kind: Optional[str] = None,
+) -> str:
+    """Final report type for a Drive file.
+
+    ``override`` (an explicit CLI choice) always wins. ``folder_kind`` — the
+    default of the folder the file came from — is right for photos and scans
+    with no extractable text, but it used to win over the content too: a
+    boarding pass, event tickets and a deal memo dropped in the archive folder
+    were all filed (and summarised) as sperm tests. Now, when the file has
+    text:
+
+    - text with no medical vocabulary at all → ``unclassified`` (kept, but
+      never sent to biomarker extraction or the advisor as a lab result);
+    - otherwise the folder default stands.
+    """
+    if override:
+        return override
+    text = (text_content or "").strip()
+    if not folder_kind:
+        return classify_report(filename, text) or "unclassified"
+    if len(text) < _MIN_TEXT_FOR_CONTENT_CHECK:
+        return folder_kind
+    scores = _text_scores(text)
+    if not scores.get(folder_kind):
+        if not scores and len({m.lower() for m in _MEDICAL_SIGNAL.findall(text[:6000])}) < 2:
+            return "unclassified"
+    return folder_kind

@@ -17,7 +17,7 @@ from .connectors.gdrive import (
     list_files_recursive,
 )
 from .pdf_extract import extract_pdf_text
-from .report_types import classify_report
+from .report_types import classify_report, resolve_kind
 from .storage import (
     init_db,
     save_lab_document_db,
@@ -210,14 +210,12 @@ def sync_drive_reports(
         # 4. classify_report heuristic on filename + text
         external_kind = f.get("_external_default_kind")
         subfolder_kind = f.get("subfolder_type")
-        kind = (
-            report_type_override
-            or external_kind
-            or subfolder_kind
-            or classify_report(name, raw_text)
+        # A folder default no longer overrides what the text plainly says
+        # (see resolve_kind): non-medical files become "unclassified".
+        kind = resolve_kind(
+            name, raw_text, override=report_type_override,
+            folder_kind=external_kind or subfolder_kind,
         )
-        if kind is None:
-            kind = "unclassified"
         metadata["kind"] = kind
 
         # AI-summarize the report text (M2). Best-effort; non-blocking on failure.

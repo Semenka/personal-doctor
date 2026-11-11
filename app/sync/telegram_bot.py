@@ -233,19 +233,71 @@ def _handle_callback(config: Any, cq: Dict[str, Any], today: date) -> None:
             logger.warning(f"Sheet sync after tap failed (local record kept): {exc}")
 
 
-def _handle_message(message: Dict[str, Any]) -> None:
+_ask_lock = threading.Lock()
+
+
+def _answer_question(config: Any, chat: str, question: str) -> None:
+    """Run the health agent for one question and send the answer (worker thread)."""
+    try:
+        from .health_agent import answer
+
+        result = answer(config, question)
+        text = result.get("answer") or "(no answer)"
+        if result.get("gbrain_hits"):
+            text += f"\n\n🧠 used {result['gbrain_hits']} note(s) from your memory"
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"Telegram question failed: {exc}")
+        text = "Sorry — I could not answer that just now. Try again in a minute."
+    finally:
+        _ask_lock.release()
+    for chunk in _chunks(text):
+        _call("sendMessage", {"chat_id": chat, "text": chunk, "disable_web_page_preview": True})
+
+
+def _handle_message(message: Dict[str, Any], config: Any = None) -> None:
     text = (message.get("text") or "").strip()
-    if not text.startswith("/start") and not text.startswith("/id"):
-        return
     chat = str((message.get("chat") or {}).get("id", ""))
-    if chat and chat == chat_id():
-        body = "✅ Connected — daily digests and action checkboxes come here."
-    else:
-        body = (
-            f"Your chat id is {chat}.\n"
-            f"Add TELEGRAM_CHAT_ID={chat} to ~/personal-doctor/.env and restart the service."
-        )
-    _call("sendMessage", {"chat_id": chat, "text": body})
+    if not text or not chat:
+        return
+    owner = bool(chat_id()) and chat == chat_id()
+    if text.startswith("/start") or text.startswith("/id"):
+        if owner:
+            body = (
+                "✅ Connected — daily digests and action checkboxes come here.\n"
+                "Ask me anything about your health: just type the question."
+            )
+        else:
+            body = (
+                f"Your chat id is {chat}.\n"
+                f"Add TELEGRAM_CHAT_ID={chat} to ~/personal-doctor/.env and restart the service."
+            )
+        _call("sendMessage", {"chat_id": chat, "text": body})
+        return
+    # Free text = a question for the Health OS. Only the owner's chat is
+    # answered: health data never goes to anyone else who finds the bot.
+    if not owner or config is None:
+        return
+    if text.startswith("/ask"):
+        text = text[4:].strip()
+    elif text.startswith("/"):
+        return
+    if not text:
+        _call("sendMessage", {"chat_id": chat, "text": "Type your question after /ask, or just send it."})
+        return
+    if not _ask_lock.acquire(blocking=False):
+        _call("sendMessage", {"chat_id": chat, "text": "⏳ Still working on your previous question."})
+        return
+    # The answer takes ~30 s (LLM): acknowledge now, answer from a worker so
+    # checkbox taps keep being handled by the poll loop meanwhile.
+    _call("sendMessage", {"chat_id": chat, "text": "🔎 Checking your data and memory…"})
+    try:
+        threading.Thread(
+            target=_answer_question, args=(config, chat, text),
+            name="telegram-ask", daemon=True,
+        ).start()
+    except Exception:
+        _ask_lock.release()
+        raise
 
 
 def handle_update(config: Any, update: Dict[str, Any], today: Optional[date] = None) -> None:
@@ -254,7 +306,7 @@ def handle_update(config: Any, update: Dict[str, Any], today: Optional[date] = N
         if "callback_query" in update:
             _handle_callback(config, update["callback_query"], today)
         elif "message" in update:
-            _handle_message(update["message"])
+            _handle_message(update["message"], config)
     except Exception as exc:
         logger.warning(f"Telegram update {update.get('update_id')} failed: {exc}")
 

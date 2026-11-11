@@ -347,6 +347,32 @@ def _extract_priority_and_backup(advice_text: str) -> Dict[str, Any]:
     return result
 
 
+_GOAL_ICON = {"energy": "⚡", "fertility": "🌱", "both": "⚡🌱"}
+
+
+def _extract_top_actions(advice_text: str, limit: int = 3) -> List[Dict[str, str]]:
+    """The day's numbered actions: number, title, goal, when, first step.
+
+    Current plans carry "| Goal: Energy/Fertility/Both |" on each action's
+    header line; older Priority/Backup plans have no goal and get ''.
+    """
+    out: List[Dict[str, str]] = []
+    for m in re.finditer(
+        r"^\s*(\d+)\.\s+\*\*([^*\n]+?)\*\*([^\n]*)", advice_text or "", re.MULTILINE
+    ):
+        number = int(m.group(1))
+        goal = re.search(r"Goal:\s*\**\s*(Energy|Fertility|Both)", m.group(3), re.IGNORECASE)
+        detail = _action_when_and_step(advice_text, number)
+        out.append({
+            "number": str(number), "title": m.group(2).strip(),
+            "goal": goal.group(1).capitalize() if goal else "",
+            "when": detail["when"], "step": detail["step"],
+        })
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _action_when_and_step(advice_text: str, number: int) -> Dict[str, str]:
     """Pull the **When:** time and step a) for numbered action ``number``.
 
@@ -448,11 +474,13 @@ def send_whatsapp_advice(
 
     Message shape:
         🩺 Daily Plan — YYYY-MM-DD
-        🎯 Priority: <title> — <when>
+        ⚠️ <anomaly> → <researched corrective action>   (only when flagged)
+        Top 3 for energy & fertility:
+        ⚡ 1. Energy: <title> — <when>
            ↳ <step a>
-        🔁 Backup: <title> — <when>
+        🌱 2. Fertility: <title> — <when>
            ↳ <step a>
-        ⚡ Quick wins: <mw1> · <mw2> · <mw3>
+        ⚡🌱 3. Both: <title> — <when>
         📊 biomarkers · 📋 protocol · 📚 papers
         ⌚ Yesterday: <finalized steps / active min / sleep if measured>
         ✅ Tick actions done (1 tap): <tracker Sheet URL>
@@ -472,23 +500,47 @@ def send_whatsapp_advice(
         return _run_openclaw_send(message)
 
     parsed = _extract_priority_and_backup(advice_text)
-    priority = parsed.get("priority") or "(see email)"
-    backup = parsed.get("backup")
     micro_wins = parsed.get("micro_wins", [])
+    top = _extract_top_actions(advice_text)
+    has_goals = any(a["goal"] for a in top)
 
-    # Priority/backup carry their time + first concrete step so the phone
+    # Each action carries its goal, time and first concrete step so the phone
     # digest is actionable on its own (titles alone forced a trip to email).
-    def _action_lines(icon: str, label: str, title: str, number: int) -> List[str]:
-        d = _action_when_and_step(advice_text, number)
-        head = f"{icon} {label}: {title}"
-        if d["when"]:
-            head += f" — {d['when']}"
+    def _action_lines(icon: str, label: str, action: Dict[str, str]) -> List[str]:
+        head = f"{icon} {label}: {action['title']}"
+        if action["when"]:
+            head += f" — {action['when']}"
         out = [head]
-        if d["step"]:
-            out.append(f"   ↳ {d['step']}")
+        if action["step"]:
+            out.append(f"   ↳ {action['step']}")
         return out
 
-    lines = [f"🩺 Daily Plan — {day}"] + _action_lines("🎯", "Priority", priority, 1)
+    lines = [f"🩺 Daily Plan — {day}"]
+    if has_goals:
+        lines.append("Top 3 for energy & fertility:")
+    plan_lines: List[str] = []
+    for i, action in enumerate(top):
+        if has_goals:
+            icon = _GOAL_ICON.get(action["goal"].lower(), "🎯")
+            label = f"{i + 1}. {action['goal'] or 'Health'}"
+        else:  # plans written before the Top 3 format
+            icon, label = (("🎯", "Priority"), ("🔁", "Backup"), ("➕", "Also"))[i]
+        plan_lines += _action_lines(icon, label, action)
+    if not top:
+        plan_lines.append("🎯 Priority: (see email)")
+    lines += plan_lines
+
+    # What the watches flagged this morning, with the researched fix.
+    try:
+        from datetime import date as _date
+
+        from .anomaly_research import digest_lines
+
+        anomaly = digest_lines(config, _date.fromisoformat(str(day)))
+    except Exception:
+        anomaly = []
+    if anomaly:
+        lines.insert(1, "\n".join(anomaly))
 
     # If Fitbit Air hadn't synced by 8 AM, surface a one-line nudge on the phone channel
     # too (the full plan below still ships from labs + protocol). Drives the user
@@ -522,8 +574,6 @@ def send_whatsapp_advice(
         if fixes:
             line += " — " + "; ".join(fixes)
         lines.insert(1, line)
-    if backup:
-        lines += _action_lines("🔁", "Backup", backup, 2)
     if micro_wins:
         # Strip trailing dash/em-dash descriptions for the WhatsApp short form
         trimmed = [w.split("—")[0].strip() for w in micro_wins]
@@ -645,8 +695,8 @@ def send_whatsapp_evening_nudge(
     if not open_actions:
         return False
 
-    # Only surface the priority + backup (first 2); ignore micro-wins to keep light
-    top = open_actions[:2]
+    # The day's Top 3 that are still open
+    top = open_actions[:3]
     lines = [
         f"🌙 {day} — still open:",
         "",
